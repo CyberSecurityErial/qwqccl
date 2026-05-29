@@ -1354,7 +1354,7 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
               TRACE(NCCL_NET, "sendProxy [%ld/%d/%d] Isend posted, req %p, buff %p, size %d, proto %d, myRank %d, channelId %d, mhandle %p", sub->transmitted, buffSlot, sub->nsteps, sub->requests[buffSlot], buff, size, p, proxyState->tpRank, sub->channelId, sub->sendMhandle);
               sub->transSize = size;
               sub->transmitted += args->sliceSteps;
-              ncclProfilerRecordProxyStepEventState(s, args, transmittedStepId, ncclProfilerProxyStepSendWait);
+              ncclProfilerRecordProxyStepEventStateWithSize(s, args, transmittedStepId, size, ncclProfilerProxyStepSendWait);
               args->idle = 0;
               continue;
             }

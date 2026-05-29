@@ -127,8 +127,9 @@ __hidden void printProxyStepEventHeader(FILE* fh, struct proxyStep* event) {
             "SendPeerWait", proxyStepId, getpid(), 1, event->timestamp[PROXY_STEP_SEND_PEER_WAIT], event->step);
     fprintf(fh, "{\"name\": \"%s\", \"cat\": \"NET\", \"ph\": \"e\", \"id\": %d, \"pid\": %d, \"tid\": %d, \"ts\": %f},\n",
             "SendPeerWait", proxyStepId, getpid(), 1, event->timestamp[PROXY_STEP_SEND_WAIT]);
-    fprintf(fh, "{\"name\": \"%s\", \"cat\": \"NET\", \"ph\": \"b\", \"id\": %d, \"pid\": %d, \"tid\": %d, \"ts\": %f, \"args\": {\"Step\": %d}},\n",
-            "SendWait", proxyStepId, getpid(), 1, event->timestamp[PROXY_STEP_SEND_WAIT], event->step);
+    fprintf(fh, "{\"name\": \"%s\", \"cat\": \"NET\", \"ph\": \"b\", \"id\": %d, \"pid\": %d, \"tid\": %d, \"ts\": %f, \"args\": {\"Step\": %d, \"Bytes\": %zu, \"Channel\": %d, \"Peer\": %d}},\n",
+            "SendWait", proxyStepId, getpid(), 1, event->timestamp[PROXY_STEP_SEND_WAIT], event->step, event->transSize,
+            event->parent ? event->parent->channelId : -1, event->parent ? event->parent->peer : -1);
   } else {
     fprintf(fh, "{\"name\": \"%s\", \"cat\": \"NET\", \"ph\": \"b\", \"id\": %d, \"pid\": %d, \"tid\": %d, \"ts\": %f, \"args\": {\"Step\": %d}},\n",
             "RecvWait", proxyStepId, getpid(), 1, event->timestamp[PROXY_STEP_RECV_WAIT], event->step);

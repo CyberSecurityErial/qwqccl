@@ -667,19 +667,24 @@ ncclResult_t ncclProfilerRecordProxyOpEventState(int s, struct ncclProxyArgs* ar
   return ncclSuccess;
 }
 
-ncclResult_t ncclProfilerRecordProxyStepEventState(int s, struct ncclProxyArgs* args, int stepId, ncclProfilerEventState_t eState) {
+ncclResult_t ncclProfilerRecordProxyStepEventStateWithSize(int s, struct ncclProxyArgs* args, int stepId, size_t transSize, ncclProfilerEventState_t eState) {
   TIME_START_EVENT(proxyStepRecord);
   struct ncclProxySubArgs* sub = &args->subs[s];
   if (COMPILER_EXPECT(ncclProfiler != NULL, 0) && sub->opEventHandle) {
     int step_ = DIVUP(stepId, args->sliceSteps);
     if (sub->pHandles[step_%NCCL_STEPS].stepEventHandle) {
       ncclProfilerEventStateArgs_t a = { };
-      a.proxyStep.transSize = sub->transSize;
+      a.proxyStep.transSize = transSize;
       ncclProfiler->recordEventState(sub->pHandles[step_%NCCL_STEPS].stepEventHandle, eState, &a);
     }
   }
   TIME_STOP_EVENT(proxyStepRecord);
   return ncclSuccess;
+}
+
+ncclResult_t ncclProfilerRecordProxyStepEventState(int s, struct ncclProxyArgs* args, int stepId, ncclProfilerEventState_t eState) {
+  struct ncclProxySubArgs* sub = &args->subs[s];
+  return ncclProfilerRecordProxyStepEventStateWithSize(s, args, stepId, sub->transSize, eState);
 }
 
 ncclResult_t ncclProfilerRecordProxyCtrlEventState(void* eHandle, int appended, ncclProfilerEventState_t eState) {

@@ -78,6 +78,7 @@ struct proxyStep {
   int state;
   int step;                         // network transfer id in given channel
   int isSend;                       // send/recv channel operation
+  size_t transSize;                 // data size transferred by this proxy step
   double timestamp[PROXY_STEP_MAX_STATES];
   double startTs;
   double stopTs;

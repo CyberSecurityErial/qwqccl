@@ -768,6 +768,7 @@ __hidden ncclResult_t exampleProfilerStartEvent(void* context, void** eHandle, n
     event->step = eDescr->proxyStep.step;
     event->parent = parent;
     event->isSend = parent->isSend;
+    event->transSize = 0;
     event->startTs = gettime() - startTime;
     event->nNetEvents = 0;
     *eHandle = event;
@@ -1020,14 +1021,19 @@ __hidden ncclResult_t exampleProfilerRecordEventState(void* eHandle, ncclProfile
       break;
     case ncclProfilerProxyStepSendWait:
       event->timestamp[PROXY_STEP_SEND_WAIT] = gettime() - startTime;
-      parent->transSize += eStateArgs->proxyStep.transSize;
+      if (eStateArgs != NULL) {
+        event->transSize = eStateArgs->proxyStep.transSize;
+        parent->transSize += eStateArgs->proxyStep.transSize;
+      }
       break;
     case ncclProfilerProxyStepRecvWait:
       event->timestamp[PROXY_STEP_RECV_WAIT] = gettime() - startTime;
       break;
     case ncclProfilerProxyStepRecvFlushWait:
       event->timestamp[PROXY_STEP_RECV_FLUSH_WAIT] = gettime() - startTime;
-      parent->transSize += eStateArgs->proxyStep.transSize;
+      if (eStateArgs != NULL) {
+        parent->transSize += eStateArgs->proxyStep.transSize;
+      }
       break;
     case ncclProfilerProxyStepRecvGPUWait:
       event->timestamp[PROXY_STEP_RECV_GPU_WAIT] = gettime() - startTime;
