@@ -8,7 +8,7 @@ resume without relying on chat context.
 
 Latest feature commit before this snapshot:
 
-- `35fbe37 Add merge auto runtime gating logs`
+- `f906595 Dump merge auto default graph cross edges`
 
 Implemented commits:
 
@@ -57,6 +57,15 @@ Implemented commits:
     - nranks_unsupported
   - Does not run candidate graph search or change final behavior.
 
+- `f906595 Dump merge auto default graph cross edges`
+  - Reuses the computed default ring graph.
+  - Builds the two-node map from `comm`.
+  - Extracts cross-node edges from ring order.
+  - Dumps:
+    - `MergeAutoDump: cand=default ch=xx edge=src->dst dir=a->b`
+  - Does not resolve netDev/HCA yet.
+  - Does not build alternate candidates yet.
+
 ## Verification So Far
 
 - `git diff --check` passed for each committed step.
@@ -80,18 +89,13 @@ Implemented commits:
 
 ## Next Work Items
 
-1. Real graph cross-edge analysis
-   - Use `ncclMergeAutoExtractGraphChannelRings(...)`.
-   - Use `ncclMergeAutoExtractCrossEdges(...)`.
-   - Dump edges without netDev first.
-
-2. netDev / physical rail resolve
+1. netDev / physical rail resolve
    - Prefer graph/topology metadata.
    - Likely starting point: `ncclTopoGetNetDev(...)` in `src/graph/search.cc`.
    - Avoid calling transport listen/connect/accept.
    - Use physical rails from vNIC metadata where available; otherwise unit fallback.
 
-3. Candidate dry-run
+2. Candidate dry-run
    - Build/import superset topology.
    - Copy/filter into:
      - `NCCL_NET_MERGE_VIEW_UNMERGED`
@@ -100,24 +104,23 @@ Implemented commits:
    - Print candidate metrics.
    - Keep final behavior default at first.
 
-4. Selection and commit
+3. Selection and commit
    - Score is `bidirBw`.
    - Threshold default is 110.
    - If merge0 is clearly higher, select unmerged.
    - Otherwise keep merged/default.
    - Candidate failure falls back to merged/default.
 
-5. Docs/tests
+4. Docs/tests
    - Turn the temporary synthetic harness into a repo-local test or script.
    - Add manual validation commands and expected logs.
 
 ## Suggested Next Commit
 
-Implement real default-graph cross-edge dump only:
+Implement netDev/physical rail resolve for dumped default-graph edges:
 
-- Reuse the already computed default ring graph.
-- Build the host-hash node map from `comm`.
-- Extract cross-node edges from graph rings.
-- Dump `MergeAutoDump: cand=default ch=xx edge=src->dst dir=a->b`.
-- Do not resolve netDev yet.
+- Find where graph search records or can recompute the selected NET device for a rank edge.
+- Add a resolver that does not call transport listen/connect/accept.
+- Fill `edge.netDev`, `edge.nPhysRails`, and rail bandwidth fields where possible.
+- Extend dump lines with `net=IB/x phys={...} bw=...`.
 - Do not build alternate candidates yet.
