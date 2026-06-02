@@ -8,6 +8,9 @@
 #include "net_merge_auto.h"
 #include "debug.h"
 #include "param.h"
+#include "topo.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 extern int64_t ncclParamIbMergeNics();
@@ -37,6 +40,98 @@ ncclResult_t ncclIbMergeNicsAutoLogEnv() {
       ncclIbMergeNicsAutoThresholdPct(), ncclIbMergeNicsAutoDumpEnabled() ? 1 : 0);
   }
   return ncclSuccess;
+}
+
+ncclResult_t ncclMergeAutoExtractGraphChannelRings(
+    struct ncclTopoSystem* system,
+    const struct ncclTopoGraph* graph,
+    struct ncclMergeAutoChannelRing* rings,
+    int* rankStorage,
+    int maxChannels,
+    int maxRanksPerChannel,
+    struct ncclMergeAutoChannelSet* out) {
+  if (system == NULL || graph == NULL || rings == NULL || rankStorage == NULL || out == NULL) return ncclInvalidArgument;
+  if (graph->nChannels < 0 || graph->nChannels > maxChannels) return ncclInvalidArgument;
+  if (graph->pattern != NCCL_TOPO_PATTERN_RING) return ncclInvalidArgument;
+  int ngpus = system->nodes[GPU].count;
+  if (ngpus <= 0 || ngpus > maxRanksPerChannel || ngpus > NCCL_MERGE_AUTO_MAX_RANKS) return ncclInvalidArgument;
+
+  out->nChannels = 0;
+  out->rings = rings;
+  for (int c = 0; c < graph->nChannels; c++) {
+    int* ranks = rankStorage + c * maxRanksPerChannel;
+    for (int i = 0; i < ngpus; i++) {
+      int rank = graph->intra[c * ngpus + i];
+      int gpuIndex;
+      ncclResult_t ret = ncclTopoRankToIndex(system, rank, &gpuIndex, /*showWarn=*/false);
+      if (ret != ncclSuccess) return ret;
+      ranks[i] = rank;
+    }
+    rings[c].channelId = c;
+    rings[c].nRanks = ngpus;
+    rings[c].ranks = ranks;
+    out->nChannels++;
+  }
+  return ncclSuccess;
+}
+
+ncclResult_t ncclMergeAutoDumpGraphChannelRings(const char* label, struct ncclTopoSystem* system, const struct ncclTopoGraph* graph) {
+  if (!ncclIbMergeNicsAutoDumpEnabled()) return ncclSuccess;
+  if (label == NULL) label = "graph";
+  if (system == NULL || graph == NULL || graph->nChannels < 0 || graph->nChannels > MAXCHANNELS) return ncclInvalidArgument;
+  if (graph->nChannels == 0) return ncclSuccess;
+
+  int ngpus = system->nodes[GPU].count;
+  if (ngpus <= 0 || ngpus > NCCL_MERGE_AUTO_MAX_RANKS) return ncclInvalidArgument;
+
+  struct ncclMergeAutoChannelRing* rings = (struct ncclMergeAutoChannelRing*)malloc(sizeof(*rings) * graph->nChannels);
+  int* rankStorage = (int*)malloc(sizeof(*rankStorage) * graph->nChannels * ngpus);
+  if (rings == NULL || rankStorage == NULL) {
+    free(rings);
+    free(rankStorage);
+    return ncclSystemError;
+  }
+  struct ncclMergeAutoChannelSet channels;
+  ncclResult_t ret = ncclMergeAutoExtractGraphChannelRings(system, graph, rings, rankStorage, graph->nChannels, ngpus, &channels);
+  if (ret != ncclSuccess) {
+    free(rings);
+    free(rankStorage);
+    return ret;
+  }
+
+  for (int c = 0; c < channels.nChannels; c++) {
+    const struct ncclMergeAutoChannelRing* ring = channels.rings + c;
+    int lineSize = 64 + ring->nRanks * 16;
+    char* line = (char*)malloc(lineSize);
+    if (line == NULL) {
+      ret = ncclSystemError;
+      break;
+    }
+    int offset = snprintf(line, lineSize, "MergeAutoDump: cand=%s ch=%02d ring=", label, ring->channelId);
+    if (offset < 0) {
+      free(line);
+      ret = ncclSystemError;
+      break;
+    }
+    for (int r = 0; r < ring->nRanks && offset < lineSize; r++) {
+      int written = snprintf(line + offset, lineSize - offset, "%s%d", r == 0 ? "" : " ", ring->ranks[r]);
+      if (written < 0) {
+        free(line);
+        ret = ncclSystemError;
+        break;
+      }
+      offset += written;
+    }
+    if (ret == ncclSuccess) {
+      if (offset >= lineSize) snprintf(line + lineSize - 4, 4, "...");
+      INFO(NCCL_GRAPH|NCCL_NET, "%s", line);
+    }
+    free(line);
+    if (ret != ncclSuccess) break;
+  }
+  free(rings);
+  free(rankStorage);
+  return ret;
 }
 
 ncclResult_t ncclMergeAutoBuildTwoNodeMapFromHashes(int nranks, const uint64_t* rankHostHash, struct ncclMergeAutoNodeMap* map) {

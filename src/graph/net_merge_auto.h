@@ -15,6 +15,9 @@
 #define NCCL_MERGE_AUTO_MAX_PHYS_RAILS_PER_EDGE 16
 #define NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS 256
 
+struct ncclTopoGraph;
+struct ncclTopoSystem;
+
 enum ncclIbMergeNicsMode {
   NCCL_IB_MERGE_NICS_MODE_UNMERGED = 0,
   NCCL_IB_MERGE_NICS_MODE_MERGED = 1,
@@ -78,6 +81,15 @@ bool ncclIbMergeNicsAutoEnabled();
 int ncclIbMergeNicsAutoThresholdPct();
 bool ncclIbMergeNicsAutoDumpEnabled();
 ncclResult_t ncclIbMergeNicsAutoLogEnv();
+ncclResult_t ncclMergeAutoExtractGraphChannelRings(
+    struct ncclTopoSystem* system,
+    const struct ncclTopoGraph* graph,
+    struct ncclMergeAutoChannelRing* rings,
+    int* rankStorage,
+    int maxChannels,
+    int maxRanksPerChannel,
+    struct ncclMergeAutoChannelSet* out);
+ncclResult_t ncclMergeAutoDumpGraphChannelRings(const char* label, struct ncclTopoSystem* system, const struct ncclTopoGraph* graph);
 ncclResult_t ncclMergeAutoBuildTwoNodeMapFromHashes(int nranks, const uint64_t* rankHostHash, struct ncclMergeAutoNodeMap* map);
 ncclResult_t ncclMergeAutoExtractCrossEdges(
     const struct ncclMergeAutoChannelSet* channels,

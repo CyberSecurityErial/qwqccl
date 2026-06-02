@@ -22,6 +22,7 @@
 #include "enqueue.h"
 #include "graph.h"
 #include "graph/topo.h"
+#include "graph/net_merge_auto.h"
 #include "argcheck.h"
 #include "tuner.h"
 #include "ras.h"
@@ -1144,6 +1145,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   ringGraph->maxChannels = MAXCHANNELS/2;
   NCCLCHECKGOTO(ncclTopoCompute(comm->topo, ringGraph), ret, fail);
   NCCLCHECKGOTO(ncclTopoPrintGraph(comm->topo, ringGraph), ret, fail);
+  NCCLCHECKGOTO(ncclMergeAutoDumpGraphChannelRings("default", comm->topo, ringGraph), ret, fail);
 
   memset(treeGraph, 0, sizeof(struct ncclTopoGraph));
   treeGraph->id = 1;
