@@ -8,6 +8,7 @@
 #include "core.h"
 #include "graph.h"
 #include "topo.h"
+#include "net_merge_auto.h"
 #include "comm.h"
 #include "nccl.h"
 #include "nvmlwrap.h"
@@ -31,8 +32,6 @@
 const char* topoNodeTypeStr[] = { "GPU", "PCI", "NVS", "CPU", "NIC", "NET", "GIN", "DEV" };
 const char* topoLinkTypeStr[] = { "LOC", "NVL", "",    "C2C", "PCI",    "",    "",    "",    "", "SYS", "NET" };
 const char* topoPathTypeStr[] = { "LOC", "NVL", "NVB", "C2C", "PIX", "PXB", "P2C", "PXN", "PHB", "SYS", "NET", "DIS" };
-
-extern int64_t ncclParamIbMergeNics();
 
 /******************************************************************/
 /******************* Graph Creation Functions *********************/
@@ -1550,7 +1549,7 @@ static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIn
 
 // Calls to network plugin APIs should be protected. This function should be called inside a per-process lock.
 ncclResult_t ncclTopoProcessNetWithMergeView(ncclXml* xml, const char* dumpXmlFile, struct ncclTopoNetInfo* net, enum ncclNetMergeView mergeView) {
-  if (net->net && net->name && strcmp(net->name, "IB") == 0 && ncclParamIbMergeNics() == 0) {
+  if (net->net && net->name && strcmp(net->name, "IB") == 0 && ncclIbMergeNicsMode() == NCCL_IB_MERGE_NICS_MODE_UNMERGED) {
     mergeView = NCCL_NET_MERGE_VIEW_UNMERGED;
   }
   bool usePhysicalDevices = (dumpXmlFile || net->makeVDevice == NULL || mergeView == NCCL_NET_MERGE_VIEW_UNMERGED);
@@ -1646,6 +1645,7 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
   {
       std::lock_guard<std::mutex> lock(netMutex);
       INFO(NCCL_GRAPH, "TOPO/NET : Importing network plugins to topology");
+      NCCLCHECKGOTO(ncclIbMergeNicsAutoLogEnv(), ret, fail);
       ncclGin_t* gin = comm->sharedRes->ginState.ncclGin;
       if (gin) {
         netInfo.net = 0;
