@@ -1426,9 +1426,71 @@ out:
   return res;
 }
 
+static ncclResult_t ncclTopoXmlHasNetKeepAttrs(struct ncclXml* xml, bool* hasKeepAttr) {
+  *hasKeepAttr = false;
+  struct ncclXmlNode* netNode = NULL;
+  NCCLCHECK(xmlFindTag(xml, "net", &netNode));
+  while (netNode) {
+    const char* keepAttr = NULL;
+    NCCLCHECK(xmlGetAttr(netNode, "keep", &keepAttr));
+    if (keepAttr) {
+      *hasKeepAttr = true;
+      return ncclSuccess;
+    }
+    NCCLCHECK(xmlFindNextTag(xml, "net", netNode, &netNode));
+  }
+  return ncclSuccess;
+}
+
+static ncclResult_t ncclTopoApplyNetMergeView(struct ncclXml* xml, enum ncclNetMergeView mergeView) {
+  struct ncclXmlNode* gpuNode = NULL;
+  NCCLCHECK(xmlFindTag(xml, "gpu", &gpuNode));
+  while (gpuNode) {
+    NCCLCHECK(xmlSetAttrInt(gpuNode, "keep", 1));
+    NCCLCHECK(xmlFindNextTag(xml, "gpu", gpuNode, &gpuNode));
+  }
+
+  bool hasNetKeepAttr = false;
+  NCCLCHECK(ncclTopoXmlHasNetKeepAttrs(xml, &hasNetKeepAttr));
+
+  struct ncclXmlNode* netNode = NULL;
+  NCCLCHECK(xmlFindTag(xml, "net", &netNode));
+  while (netNode) {
+    int isNet = 1;
+    int vNdevs = 0;
+    NCCLCHECK(xmlGetAttrIntDefault(netNode, "net", &isNet, 1));
+    NCCLCHECK(xmlGetAttrIntDefault(netNode, "vndevs", &vNdevs, 0));
+    if (isNet) {
+      if (mergeView == NCCL_NET_MERGE_VIEW_UNMERGED) {
+        NCCLCHECK(xmlSetAttrInt(netNode, "keep", vNdevs > 1 ? 0 : 1));
+      } else if (mergeView == NCCL_NET_MERGE_VIEW_SUPERSET || !hasNetKeepAttr) {
+        NCCLCHECK(xmlSetAttrInt(netNode, "keep", 1));
+      }
+    }
+    NCCLCHECK(xmlFindNextTag(xml, "net", netNode, &netNode));
+  }
+  return ncclSuccess;
+}
+
+ncclResult_t ncclTopoCopyXmlForNetMergeView(struct ncclXml* dst, struct ncclXml* src, enum ncclNetMergeView mergeView) {
+  if (dst == NULL || src == NULL || src->maxIndex == 0 || dst->maxIndex != 0) {
+    WARN("TOPO/NET : Invalid XML copy request for net merge view");
+    return ncclInvalidArgument;
+  }
+  if (dst->maxNodes < src->maxIndex) {
+    WARN("TOPO/NET : Destination XML has too few nodes for net merge view copy. %d < %d", dst->maxNodes, src->maxIndex);
+    return ncclInternalError;
+  }
+
+  NCCLCHECK(xmlAddTree(dst, NULL, src->nodes));
+  NCCLCHECK(ncclTopoApplyNetMergeView(dst, mergeView));
+  NCCLCHECK(ncclTopoTrimXml(dst));
+  return ncclSuccess;
+}
+
 static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIndex, struct ncclTopoNetInfo* netInfo, int virtualNics, enum ncclNetMergeView mergeView) {
   for (int n = startIndex; n < endIndex; n++) {
-    ncclNetProperties_t props;
+    ncclNetProperties_t props = {0};
     NCCLCHECK(netInfo->getProperties(n, &props));
     // Unmerged view must not import merged virtual NICs.
     if (mergeView == NCCL_NET_MERGE_VIEW_UNMERGED && props.vProps.ndevs > 1) {
@@ -1455,6 +1517,7 @@ static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIn
     xmlGetAttrIntDefault(netNode, "dev", &dev, -1);
     if (dev != -1 && dev != n) INFO(NCCL_GRAPH, "TOPO/NET : Changing %s dev index from %d to %d", netInfo->name, dev, n);
     NCCLCHECK(xmlSetAttrInt(netNode, "dev", n));
+    NCCLCHECK(xmlSetAttrInt(netNode, "vndevs", props.vProps.ndevs));
     NCCLCHECK(xmlInitAttrInt(netNode, "latency", props.latency));
     NCCLCHECK(xmlInitAttrInt(netNode, "speed", props.speed));
     NCCLCHECK(xmlInitAttrInt(netNode, "port", props.port));
@@ -1511,6 +1574,7 @@ ncclResult_t ncclTopoProcessNetWithMergeView(ncclXml* xml, const char* dumpXmlFi
       NCCLCHECK(ncclTopoPopulateNics(xml, nPhysicalNics, nPhysicalNics + nVirtualNics, net, /*virtual=*/true, mergeView));
     }
   }
+  if (mergeView == NCCL_NET_MERGE_VIEW_SUPERSET) NCCLCHECK(ncclTopoApplyNetMergeView(xml, mergeView));
 
   return ncclSuccess;
 }
