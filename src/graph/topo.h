@@ -165,6 +165,12 @@ ncclResult_t ncclTopoGetGpuMinPath(struct ncclTopoSystem* system, int type, int*
 ncclResult_t ncclTopoGetGpuMaxPath(struct ncclTopoSystem* system, int type, int* max);
 ncclResult_t ncclTopoSplitNvLink(struct ncclTopoSystem* system, int* splitNvLink);
 
+enum ncclNetMergeView {
+  NCCL_NET_MERGE_VIEW_UNMERGED,
+  NCCL_NET_MERGE_VIEW_MERGED_DEFAULT,
+  NCCL_NET_MERGE_VIEW_SUPERSET
+};
+
 struct ncclTopoNetInfo {
   bool coll;
   bool gin;
@@ -187,6 +193,7 @@ struct ncclTopoNetInfo {
 };
 
 ncclResult_t ncclTopoProcessNet(ncclXml* xml, const char* dumpXmlFile, struct ncclTopoNetInfo* net);
+ncclResult_t ncclTopoProcessNetWithMergeView(ncclXml* xml, const char* dumpXmlFile, struct ncclTopoNetInfo* net, enum ncclNetMergeView mergeView);
 ncclResult_t ncclTopoGetFusionEnv(int* mergeLevel, const char** forceMerge);
 
 #define NCCL_TOPO_XML_MAX_NODES 256

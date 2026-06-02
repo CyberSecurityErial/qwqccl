@@ -1426,12 +1426,12 @@ out:
   return res;
 }
 
-static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIndex, struct ncclTopoNetInfo* netInfo, int virtualNics) {
+static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIndex, struct ncclTopoNetInfo* netInfo, int virtualNics, enum ncclNetMergeView mergeView) {
   for (int n = startIndex; n < endIndex; n++) {
     ncclNetProperties_t props;
     NCCLCHECK(netInfo->getProperties(n, &props));
-    // Explicit unmerged IB mode must not import merged virtual NICs.
-    if (netInfo->net && netInfo->name && strcmp(netInfo->name, "IB") == 0 && ncclParamIbMergeNics() == 0 && props.vProps.ndevs > 1) {
+    // Unmerged view must not import merged virtual NICs.
+    if (mergeView == NCCL_NET_MERGE_VIEW_UNMERGED && props.vProps.ndevs > 1) {
       INFO(NCCL_GRAPH|NCCL_NET, "TOPO/NET : Skipping %s device %d '%s' for NCCL_IB_MERGE_NICS=0", netInfo->name, n, props.name);
       continue;
     }
@@ -1486,12 +1486,15 @@ static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIn
 }
 
 // Calls to network plugin APIs should be protected. This function should be called inside a per-process lock.
-ncclResult_t ncclTopoProcessNet(ncclXml* xml, const char* dumpXmlFile, struct ncclTopoNetInfo* net) {
-  bool usePhysicalDevices = (dumpXmlFile || net->makeVDevice == NULL);
+ncclResult_t ncclTopoProcessNetWithMergeView(ncclXml* xml, const char* dumpXmlFile, struct ncclTopoNetInfo* net, enum ncclNetMergeView mergeView) {
+  if (net->net && net->name && strcmp(net->name, "IB") == 0 && ncclParamIbMergeNics() == 0) {
+    mergeView = NCCL_NET_MERGE_VIEW_UNMERGED;
+  }
+  bool usePhysicalDevices = (dumpXmlFile || net->makeVDevice == NULL || mergeView == NCCL_NET_MERGE_VIEW_UNMERGED);
   int nPhysicalNics, nVirtualNics;
   NCCLCHECK(net->getDevCount(net->netPluginIndex, &nPhysicalNics, &nVirtualNics));
   // List the physical devices in the topo
-  NCCLCHECK(ncclTopoPopulateNics(xml, 0, nPhysicalNics, net, /*virtual=*/false));
+  NCCLCHECK(ncclTopoPopulateNics(xml, 0, nPhysicalNics, net, /*virtual=*/false, mergeView));
   if (!usePhysicalDevices) {
     // Virtual devices are only created once per network
     if (nVirtualNics == NCCL_UNDEF_DEV_COUNT) {
@@ -1505,11 +1508,15 @@ ncclResult_t ncclTopoProcessNet(ncclXml* xml, const char* dumpXmlFile, struct nc
     }
     // populate the virtual devices if any
     if (nVirtualNics > 0) {
-      NCCLCHECK(ncclTopoPopulateNics(xml, nPhysicalNics, nPhysicalNics + nVirtualNics, net, /*virtual=*/true));
+      NCCLCHECK(ncclTopoPopulateNics(xml, nPhysicalNics, nPhysicalNics + nVirtualNics, net, /*virtual=*/true, mergeView));
     }
   }
 
   return ncclSuccess;
+}
+
+ncclResult_t ncclTopoProcessNet(ncclXml* xml, const char* dumpXmlFile, struct ncclTopoNetInfo* net) {
+  return ncclTopoProcessNetWithMergeView(xml, dumpXmlFile, net, NCCL_NET_MERGE_VIEW_MERGED_DEFAULT);
 }
 
 ncclResult_t ncclTopoGetFusionEnv(int* mergeLevel, const char** forceMerge) {
