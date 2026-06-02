@@ -32,6 +32,8 @@ const char* topoNodeTypeStr[] = { "GPU", "PCI", "NVS", "CPU", "NIC", "NET", "GIN
 const char* topoLinkTypeStr[] = { "LOC", "NVL", "",    "C2C", "PCI",    "",    "",    "",    "", "SYS", "NET" };
 const char* topoPathTypeStr[] = { "LOC", "NVL", "NVB", "C2C", "PIX", "PXB", "P2C", "PXN", "PHB", "SYS", "NET", "DIS" };
 
+extern int64_t ncclParamIbMergeNics();
+
 /******************************************************************/
 /******************* Graph Creation Functions *********************/
 /******************************************************************/
@@ -1428,6 +1430,11 @@ static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIn
   for (int n = startIndex; n < endIndex; n++) {
     ncclNetProperties_t props;
     NCCLCHECK(netInfo->getProperties(n, &props));
+    // Explicit unmerged IB mode must not import merged virtual NICs.
+    if (netInfo->net && netInfo->name && strcmp(netInfo->name, "IB") == 0 && ncclParamIbMergeNics() == 0 && props.vProps.ndevs > 1) {
+      INFO(NCCL_GRAPH|NCCL_NET, "TOPO/NET : Skipping %s device %d '%s' for NCCL_IB_MERGE_NICS=0", netInfo->name, n, props.name);
+      continue;
+    }
     struct ncclXmlNode* netNode = NULL;
     struct ncclXmlNode* parent = NULL;
     if (virtualNics) {
