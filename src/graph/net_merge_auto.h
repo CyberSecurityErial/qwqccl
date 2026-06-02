@@ -91,6 +91,12 @@ ncclResult_t ncclMergeAutoExtractGraphChannelRings(
     int maxRanksPerChannel,
     struct ncclMergeAutoChannelSet* out);
 ncclResult_t ncclMergeAutoDumpGraphChannelRings(const char* label, struct ncclTopoSystem* system, const struct ncclTopoGraph* graph);
+ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
+    const char* label,
+    struct ncclTopoSystem* system,
+    const struct ncclTopoGraph* graph,
+    const struct ncclMergeAutoNodeMap* nodeMap);
+ncclResult_t ncclMergeAutoDumpGraphCrossEdgesFromComm(const char* label, struct ncclComm* comm, const struct ncclTopoGraph* graph);
 ncclResult_t ncclMergeAutoBuildTwoNodeMapFromHashes(int nranks, const uint64_t* rankHostHash, struct ncclMergeAutoNodeMap* map);
 ncclResult_t ncclMergeAutoBuildNodeMapFromComm(struct ncclComm* comm, struct ncclMergeAutoNodeMap* map);
 ncclResult_t ncclMergeAutoCheckRuntime(

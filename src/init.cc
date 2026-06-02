@@ -1146,6 +1146,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   NCCLCHECKGOTO(ncclTopoCompute(comm->topo, ringGraph), ret, fail);
   NCCLCHECKGOTO(ncclTopoPrintGraph(comm->topo, ringGraph), ret, fail);
   NCCLCHECKGOTO(ncclMergeAutoDumpGraphChannelRings("default", comm->topo, ringGraph), ret, fail);
+  NCCLCHECKGOTO(ncclMergeAutoDumpGraphCrossEdgesFromComm("default", comm, ringGraph), ret, fail);
 
   memset(treeGraph, 0, sizeof(struct ncclTopoGraph));
   treeGraph->id = 1;

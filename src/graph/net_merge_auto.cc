@@ -194,6 +194,61 @@ ncclResult_t ncclMergeAutoDumpGraphChannelRings(const char* label, struct ncclTo
   return ret;
 }
 
+ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
+    const char* label,
+    struct ncclTopoSystem* system,
+    const struct ncclTopoGraph* graph,
+    const struct ncclMergeAutoNodeMap* nodeMap) {
+  if (!ncclIbMergeNicsAutoDumpEnabled()) return ncclSuccess;
+  if (label == NULL) label = "graph";
+  if (system == NULL || graph == NULL || nodeMap == NULL || graph->nChannels < 0 || graph->nChannels > MAXCHANNELS) return ncclInvalidArgument;
+  if (!nodeMap->valid || nodeMap->numNodes != 2) return ncclSuccess;
+  if (graph->nChannels == 0) return ncclSuccess;
+
+  int ngpus = system->nodes[GPU].count;
+  if (ngpus <= 0 || ngpus > NCCL_MERGE_AUTO_MAX_RANKS) return ncclInvalidArgument;
+
+  struct ncclMergeAutoChannelRing* rings = (struct ncclMergeAutoChannelRing*)malloc(sizeof(*rings) * graph->nChannels);
+  int* rankStorage = (int*)malloc(sizeof(*rankStorage) * graph->nChannels * ngpus);
+  struct ncclMergeAutoCrossEdge* edges = (struct ncclMergeAutoCrossEdge*)malloc(sizeof(*edges) * graph->nChannels * ngpus);
+  if (rings == NULL || rankStorage == NULL || edges == NULL) {
+    free(rings);
+    free(rankStorage);
+    free(edges);
+    return ncclSystemError;
+  }
+
+  struct ncclMergeAutoChannelSet channels;
+  ncclResult_t ret = ncclMergeAutoExtractGraphChannelRings(system, graph, rings, rankStorage, graph->nChannels, ngpus, &channels);
+  int nEdges = 0;
+  if (ret == ncclSuccess) {
+    ret = ncclMergeAutoExtractCrossEdges(&channels, nodeMap, edges, graph->nChannels * ngpus, &nEdges);
+  }
+  if (ret == ncclSuccess) {
+    for (int e = 0; e < nEdges; e++) {
+      const struct ncclMergeAutoCrossEdge* edge = edges + e;
+      INFO(NCCL_GRAPH|NCCL_NET, "MergeAutoDump: cand=%s ch=%02d edge=%d->%d dir=%d->%d",
+        label, edge->channelId, edge->srcRank, edge->dstRank, edge->srcNode, edge->dstNode);
+    }
+  }
+
+  free(rings);
+  free(rankStorage);
+  free(edges);
+  return ret;
+}
+
+ncclResult_t ncclMergeAutoDumpGraphCrossEdgesFromComm(const char* label, struct ncclComm* comm, const struct ncclTopoGraph* graph) {
+  if (!ncclIbMergeNicsAutoDumpEnabled()) return ncclSuccess;
+  if (comm == NULL || graph == NULL) return ncclInvalidArgument;
+  if (comm->nRanks <= 0 || comm->nRanks > NCCL_MERGE_AUTO_MAX_RANKS) return ncclSuccess;
+
+  struct ncclMergeAutoNodeMap nodeMap;
+  ncclResult_t ret = ncclMergeAutoBuildNodeMapFromComm(comm, &nodeMap);
+  if (ret != ncclSuccess) return ret;
+  return ncclMergeAutoDumpGraphCrossEdges(label, comm->topo, graph, &nodeMap);
+}
+
 ncclResult_t ncclMergeAutoBuildTwoNodeMapFromHashes(int nranks, const uint64_t* rankHostHash, struct ncclMergeAutoNodeMap* map) {
   if (rankHostHash == NULL || map == NULL || nranks <= 0 || nranks > NCCL_MERGE_AUTO_MAX_RANKS) return ncclInvalidArgument;
 
