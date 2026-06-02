@@ -17,6 +17,7 @@
 
 struct ncclTopoGraph;
 struct ncclTopoSystem;
+struct ncclComm;
 
 enum ncclIbMergeNicsMode {
   NCCL_IB_MERGE_NICS_MODE_UNMERGED = 0,
@@ -91,6 +92,12 @@ ncclResult_t ncclMergeAutoExtractGraphChannelRings(
     struct ncclMergeAutoChannelSet* out);
 ncclResult_t ncclMergeAutoDumpGraphChannelRings(const char* label, struct ncclTopoSystem* system, const struct ncclTopoGraph* graph);
 ncclResult_t ncclMergeAutoBuildTwoNodeMapFromHashes(int nranks, const uint64_t* rankHostHash, struct ncclMergeAutoNodeMap* map);
+ncclResult_t ncclMergeAutoBuildNodeMapFromComm(struct ncclComm* comm, struct ncclMergeAutoNodeMap* map);
+ncclResult_t ncclMergeAutoCheckRuntime(
+    struct ncclComm* comm,
+    int minNetDeviceCount,
+    struct ncclMergeAutoNodeMap* nodeMap,
+    int* shouldRun);
 ncclResult_t ncclMergeAutoExtractCrossEdges(
     const struct ncclMergeAutoChannelSet* channels,
     const struct ncclMergeAutoNodeMap* nodeMap,

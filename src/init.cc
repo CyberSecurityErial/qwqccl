@@ -1279,6 +1279,12 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
       comm->isMultiRankGpu = true;
     }
   }
+
+  {
+    struct ncclMergeAutoNodeMap mergeAutoNodeMap;
+    NCCLCHECKGOTO(ncclMergeAutoCheckRuntime(comm, minLocalNetCount, &mergeAutoNodeMap, NULL), ret, fail);
+  }
+
   if (rank == 0) {
     INFO(NCCL_INIT, "Local Net device counts across ranks: min %d max %d", minLocalNetCount, maxLocalNetCount);
     INFO(NCCL_INIT, "Local CollNet device counts across ranks: min %d max %d", minLocalCollNetCount, maxLocalCollNetCount);
@@ -3316,4 +3322,3 @@ ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
   *rank = comm->rank;
   return ncclSuccess;
 }
-

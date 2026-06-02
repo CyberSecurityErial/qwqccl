@@ -6,6 +6,7 @@
  *************************************************************************/
 
 #include "net_merge_auto.h"
+#include "comm.h"
 #include "debug.h"
 #include "param.h"
 #include "topo.h"
@@ -38,6 +39,65 @@ ncclResult_t ncclIbMergeNicsAutoLogEnv() {
   if (ncclIbMergeNicsAutoEnabled()) {
     INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: env mode=2 threshold=%d dump=%d",
       ncclIbMergeNicsAutoThresholdPct(), ncclIbMergeNicsAutoDumpEnabled() ? 1 : 0);
+  }
+  return ncclSuccess;
+}
+
+ncclResult_t ncclMergeAutoBuildNodeMapFromComm(struct ncclComm* comm, struct ncclMergeAutoNodeMap* map) {
+  if (comm == NULL || map == NULL || comm->peerInfo == NULL) return ncclInvalidArgument;
+  if (comm->nRanks <= 0 || comm->nRanks > NCCL_MERGE_AUTO_MAX_RANKS) return ncclInvalidArgument;
+
+  uint64_t* rankHostHash = (uint64_t*)malloc(sizeof(*rankHostHash) * comm->nRanks);
+  if (rankHostHash == NULL) return ncclSystemError;
+  for (int r = 0; r < comm->nRanks; r++) rankHostHash[r] = comm->peerInfo[r].hostHash;
+
+  ncclResult_t ret = ncclMergeAutoBuildTwoNodeMapFromHashes(comm->nRanks, rankHostHash, map);
+  free(rankHostHash);
+  return ret;
+}
+
+static bool ncclMergeAutoIsIbNet(struct ncclComm* comm) {
+  if (comm == NULL || comm->ncclNet == NULL || comm->ncclNet->name == NULL) return false;
+  return strcmp(comm->ncclNet->name, "IB") == 0;
+}
+
+ncclResult_t ncclMergeAutoCheckRuntime(
+    struct ncclComm* comm,
+    int minNetDeviceCount,
+    struct ncclMergeAutoNodeMap* nodeMap,
+    int* shouldRun) {
+  if (shouldRun != NULL) *shouldRun = 0;
+  if (!ncclIbMergeNicsAutoEnabled()) return ncclSuccess;
+  if (comm == NULL || nodeMap == NULL) return ncclInvalidArgument;
+
+  if (comm->nRanks <= 0 || comm->nRanks > NCCL_MERGE_AUTO_MAX_RANKS) {
+    if (comm->rank == 0) INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: skipped reason=nranks_unsupported nranks=%d max=%d", comm->nRanks, NCCL_MERGE_AUTO_MAX_RANKS);
+    return ncclSuccess;
+  }
+
+  ncclResult_t ret = ncclMergeAutoBuildNodeMapFromComm(comm, nodeMap);
+  if (ret != ncclSuccess) return ret;
+
+  if (!nodeMap->valid || nodeMap->numNodes != 2) {
+    if (comm->rank == 0) INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: skipped reason=not_two_nodes nodes=%d nranks=%d", nodeMap->numNodes, comm->nRanks);
+    return ncclSuccess;
+  }
+
+  if (!ncclMergeAutoIsIbNet(comm)) {
+    const char* netName = (comm->ncclNet != NULL && comm->ncclNet->name != NULL) ? comm->ncclNet->name : "none";
+    if (comm->rank == 0) INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: skipped reason=non_ib_net net=%s", netName);
+    return ncclSuccess;
+  }
+
+  if (minNetDeviceCount < 2) {
+    if (comm->rank == 0) INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: skipped reason=num_net_devs_lt_2 count=%d", minNetDeviceCount);
+    return ncclSuccess;
+  }
+
+  if (shouldRun != NULL) *shouldRun = 1;
+  if (comm->rank == 0) {
+    INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: enabled mode=two_node nodes=2 nranks=%d minNetDevs=%d threshold=%d",
+      comm->nRanks, minNetDeviceCount, ncclIbMergeNicsAutoThresholdPct());
   }
   return ncclSuccess;
 }
