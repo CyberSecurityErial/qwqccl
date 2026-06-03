@@ -8,7 +8,7 @@ resume without relying on chat context.
 
 Latest feature commit before this snapshot:
 
-- `022fcac Dump merge auto postset ring edges`
+- `2a1dbb7 Inline IB vNIC props matching helpers`
 
 Implemented commits:
 
@@ -17,36 +17,36 @@ Implemented commits:
   - `NCCL_IB_MERGE_NICS=0` still rejects multi-device vNICs.
   - `NCCL_IB_MERGE_NICS=2` can create/reuse multi-device vNICs.
 
-- `0a9c379 Filter merged IB vNICs for unmerged topology`
+- `fc099e1 Filter merged IB vNICs for unmerged topology`
   - Topology import skips merged IB vNICs for explicit unmerged mode.
 
-- `3964cb2 Expose topology net merge view import`
+- `e436501 Expose topology net merge view import`
   - Added `ncclNetMergeView`.
   - Added `ncclTopoProcessNetWithMergeView(...)`.
 
-- `33e9e7b Add topology XML merge view filtering`
+- `78a416f Add topology XML merge view filtering`
   - Added XML view copy/filter helper.
   - Added `vndevs` metadata on NET XML nodes.
 
-- `92b4e91 Add IB merge auto mode helpers`
+- `b75aecb Add IB merge auto mode helpers`
   - `NCCL_IB_MERGE_NICS=2` is the auto mode.
   - Added threshold/dump params:
     - `NCCL_IB_MERGE_NICS_AUTO_THRESHOLD`, default `110`
     - `NCCL_IB_MERGE_NICS_AUTO_DUMP`, default `0`
 
-- `62e8460 Add merge auto synthetic metrics helpers`
+- `8142b7a Add merge auto synthetic metrics helpers`
   - Added pure helper data structures.
   - Added host-hash two-node map builder.
   - Added channel-ring cross-edge extraction.
   - Added rail-dedup metrics aggregation.
   - Added threshold selector.
 
-- `e9484ac Dump merge auto graph ring order`
+- `56134c3 Dump merge auto graph ring order`
   - Added graph ring extraction from `ncclTopoGraph::intra`.
   - Added `MergeAutoDump: cand=default ch=xx ring=...` when dump is enabled.
   - Connected read-only dump after default ring graph search.
 
-- `35fbe37 Add merge auto runtime gating logs`
+- `dc6c53f Add merge auto runtime gating logs`
   - Builds a two-node map from `comm->peerInfo[].hostHash`.
   - Adds `ncclMergeAutoCheckRuntime(...)`.
   - Logs enabled/skip decisions only when `NCCL_IB_MERGE_NICS=2`.
@@ -57,7 +57,7 @@ Implemented commits:
     - nranks_unsupported
   - Does not run candidate graph search or change final behavior.
 
-- `f906595 Dump merge auto default graph cross edges`
+- `b90b977 Dump merge auto default graph cross edges`
   - Reuses the computed default ring graph.
   - Builds the two-node map from `comm`.
   - Extracts cross-node edges from ring order.
@@ -66,7 +66,7 @@ Implemented commits:
   - Does not resolve netDev/HCA yet.
   - Does not build alternate candidates yet.
 
-- `b2c3b59 Resolve merge auto dump edge rails`
+- `b9211bd Resolve merge auto dump edge rails`
   - Uses `ncclTopoGetNetDev(...)` as a dry-run resolver for dumped edges.
   - Reads `comm->ncclNet->getProperties(netDev).vProps`.
   - Adds physical rail ids to dump lines.
@@ -74,13 +74,18 @@ Implemented commits:
   - Falls back to `net=unknown` if the dry-run resolver cannot map an edge.
   - Does not call transport listen/connect/accept.
 
-- `022fcac Dump merge auto postset ring edges`
+- `c5aa6e9 Dump merge auto postset ring edges`
   - Dumps cross-node edges derived from postset ring endpoints.
   - Uses `ringSend[node] -> ringRecv[nextNode]`.
   - Runs after `ncclTopoPostset(...)`, so odd-node endpoint swaps have already been applied.
   - Only the first rank of each node emits its node direction to avoid per-rank duplicate dumps.
   - Reuses the dry-run netDev/physical rail resolver.
   - Does not change postset, channel selection, or transport setup.
+
+- `2a1dbb7 Inline IB vNIC props matching helpers`
+  - Removed the small vProps canonicalize/compare helpers.
+  - Folded the same logic into `ncclIbFindOrMakeVDeviceInternal(...)`.
+  - Behavior is unchanged.
 
 ## Verification So Far
 
