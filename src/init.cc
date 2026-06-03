@@ -1145,6 +1145,11 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   ringGraph->pattern = NCCL_TOPO_PATTERN_RING;
   ringGraph->minChannels = 1;
   ringGraph->maxChannels = MAXCHANNELS/2;
+  if (mergeAutoTwoNode) {
+    struct ncclMergeAutoTopoCandidate mergeAutoCandidates[NCCL_MERGE_AUTO_TOPO_COUNT];
+    NCCLCHECKGOTO(ncclMergeAutoBuildChannelCandidates(comm, ringGraph, mergeAutoCandidates), ret, fail);
+    ncclMergeAutoFreeChannelCandidates(mergeAutoCandidates);
+  }
   NCCLCHECKGOTO(ncclTopoCompute(comm->topo, ringGraph), ret, fail);
   NCCLCHECKGOTO(ncclTopoPrintGraph(comm->topo, ringGraph), ret, fail);
   if (mergeAutoTwoNode) {

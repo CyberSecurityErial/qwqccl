@@ -9,6 +9,7 @@
 #define NCCL_NET_MERGE_AUTO_H_
 
 #include "nccl.h"
+#include "topo.h"
 #include <stdint.h>
 
 #define NCCL_MERGE_AUTO_MAX_RANKS 4096
@@ -73,6 +74,20 @@ struct ncclMergeAutoMetrics {
   double score;
 };
 
+enum ncclMergeAutoTopoCandidateId {
+  NCCL_MERGE_AUTO_TOPO_UNMERGED = 0,
+  NCCL_MERGE_AUTO_TOPO_MERGED = 1,
+  NCCL_MERGE_AUTO_TOPO_COUNT = 2
+};
+
+struct ncclMergeAutoTopoCandidate {
+  const char* name;
+  enum ncclNetMergeView mergeView;
+  struct ncclTopoSystem* system;
+  struct ncclTopoGraph ringGraph;
+  int valid;
+};
+
 int ncclIbMergeNicsMode();
 bool ncclIbMergeNicsAutoEnabled();
 int ncclIbMergeNicsAutoThresholdPct();
@@ -123,5 +138,10 @@ ncclResult_t ncclMergeAutoEvaluateCandidate(
     int nEdges,
     struct ncclMergeAutoMetrics* metrics);
 int ncclMergeAutoPickMergeMode(const struct ncclMergeAutoMetrics* merge0, const struct ncclMergeAutoMetrics* merge1, int thresholdPct);
+ncclResult_t ncclMergeAutoBuildChannelCandidates(
+    struct ncclComm* comm,
+    const struct ncclTopoGraph* ringGraphTemplate,
+    struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT]);
+void ncclMergeAutoFreeChannelCandidates(struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT]);
 
 #endif
