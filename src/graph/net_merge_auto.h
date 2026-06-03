@@ -91,8 +91,10 @@ ncclResult_t ncclMergeAutoExtractGraphChannelRings(
     int maxRanksPerChannel,
     struct ncclMergeAutoChannelSet* out);
 ncclResult_t ncclMergeAutoDumpGraphChannelRings(const char* label, struct ncclTopoSystem* system, const struct ncclTopoGraph* graph);
+ncclResult_t ncclMergeAutoResolveNetDevForEdge(struct ncclComm* comm, const struct ncclTopoGraph* graph, struct ncclMergeAutoCrossEdge* edge);
 ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
     const char* label,
+    struct ncclComm* comm,
     struct ncclTopoSystem* system,
     const struct ncclTopoGraph* graph,
     const struct ncclMergeAutoNodeMap* nodeMap);

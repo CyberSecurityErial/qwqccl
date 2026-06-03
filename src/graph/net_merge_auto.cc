@@ -8,6 +8,7 @@
 #include "net_merge_auto.h"
 #include "comm.h"
 #include "debug.h"
+#include "graph.h"
 #include "param.h"
 #include "topo.h"
 #include <stdio.h>
@@ -194,8 +195,69 @@ ncclResult_t ncclMergeAutoDumpGraphChannelRings(const char* label, struct ncclTo
   return ret;
 }
 
+ncclResult_t ncclMergeAutoResolveNetDevForEdge(struct ncclComm* comm, const struct ncclTopoGraph* graph, struct ncclMergeAutoCrossEdge* edge) {
+  if (comm == NULL || graph == NULL || edge == NULL) return ncclInvalidArgument;
+  edge->netDev = -1;
+  edge->netBw = 1.0;
+  edge->nPhysRails = 0;
+
+  int proxyRank;
+  int64_t netId;
+  int netDev = -1;
+  ncclResult_t ret = ncclTopoGetNetDev(comm, edge->srcRank, (struct ncclTopoGraph*)graph, edge->channelId, edge->dstRank, &netId, &netDev, &proxyRank);
+  if (ret != ncclSuccess || netDev < 0) return ncclSuccess;
+  edge->netDev = netDev;
+
+  if (comm->ncclNet == NULL || comm->ncclNet->getProperties == NULL) return ncclSuccess;
+  ncclNetProperties_t props;
+  ret = comm->ncclNet->getProperties(netDev, &props);
+  if (ret != ncclSuccess) return ncclSuccess;
+
+  int nPhysRails = props.vProps.ndevs;
+  if (nPhysRails <= 0) {
+    edge->nPhysRails = 1;
+    edge->physRails[0] = netDev;
+    edge->physRailBw[0] = 1.0;
+    return ncclSuccess;
+  }
+  if (nPhysRails > NCCL_MERGE_AUTO_MAX_PHYS_RAILS_PER_EDGE) nPhysRails = NCCL_MERGE_AUTO_MAX_PHYS_RAILS_PER_EDGE;
+  edge->nPhysRails = nPhysRails;
+  for (int r = 0; r < nPhysRails; r++) {
+    edge->physRails[r] = props.vProps.devs[r];
+    edge->physRailBw[r] = 1.0;
+  }
+  return ncclSuccess;
+}
+
+static void ncclMergeAutoFormatPhysRails(const struct ncclMergeAutoCrossEdge* edge, char* buffer, int bufferSize) {
+  if (buffer == NULL || bufferSize <= 0) return;
+  if (bufferSize < 4) {
+    buffer[0] = '\0';
+    return;
+  }
+  int offset = snprintf(buffer, bufferSize, "{");
+  if (offset < 0) {
+    buffer[0] = '\0';
+    return;
+  }
+  for (int r = 0; r < edge->nPhysRails && offset < bufferSize; r++) {
+    int written = snprintf(buffer + offset, bufferSize - offset, "%s%d", r == 0 ? "" : ",", edge->physRails[r]);
+    if (written < 0) {
+      buffer[0] = '\0';
+      return;
+    }
+    offset += written;
+  }
+  if (offset < bufferSize) {
+    snprintf(buffer + offset, bufferSize - offset, "}");
+  } else {
+    snprintf(buffer + bufferSize - 4, 4, "...");
+  }
+}
+
 ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
     const char* label,
+    struct ncclComm* comm,
     struct ncclTopoSystem* system,
     const struct ncclTopoGraph* graph,
     const struct ncclMergeAutoNodeMap* nodeMap) {
@@ -226,9 +288,22 @@ ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
   }
   if (ret == ncclSuccess) {
     for (int e = 0; e < nEdges; e++) {
-      const struct ncclMergeAutoCrossEdge* edge = edges + e;
-      INFO(NCCL_GRAPH|NCCL_NET, "MergeAutoDump: cand=%s ch=%02d edge=%d->%d dir=%d->%d",
-        label, edge->channelId, edge->srcRank, edge->dstRank, edge->srcNode, edge->dstNode);
+      struct ncclMergeAutoCrossEdge* edge = edges + e;
+      if (comm != NULL) {
+        ncclResult_t resolveRet = ncclMergeAutoResolveNetDevForEdge(comm, graph, edge);
+        if (resolveRet != ncclSuccess) ret = resolveRet;
+      }
+      if (ret != ncclSuccess) break;
+      char phys[256];
+      ncclMergeAutoFormatPhysRails(edge, phys, sizeof(phys));
+      const char* netName = (comm != NULL && comm->ncclNet != NULL && comm->ncclNet->name != NULL) ? comm->ncclNet->name : "unknown";
+      if (edge->netDev >= 0) {
+        INFO(NCCL_GRAPH|NCCL_NET, "MergeAutoDump: cand=%s ch=%02d edge=%d->%d dir=%d->%d net=%s/%d phys=%s bw=1",
+          label, edge->channelId, edge->srcRank, edge->dstRank, edge->srcNode, edge->dstNode, netName, edge->netDev, phys);
+      } else {
+        INFO(NCCL_GRAPH|NCCL_NET, "MergeAutoDump: cand=%s ch=%02d edge=%d->%d dir=%d->%d net=unknown phys=%s bw=1",
+          label, edge->channelId, edge->srcRank, edge->dstRank, edge->srcNode, edge->dstNode, phys);
+      }
     }
   }
 
@@ -246,7 +321,7 @@ ncclResult_t ncclMergeAutoDumpGraphCrossEdgesFromComm(const char* label, struct 
   struct ncclMergeAutoNodeMap nodeMap;
   ncclResult_t ret = ncclMergeAutoBuildNodeMapFromComm(comm, &nodeMap);
   if (ret != ncclSuccess) return ret;
-  return ncclMergeAutoDumpGraphCrossEdges(label, comm->topo, graph, &nodeMap);
+  return ncclMergeAutoDumpGraphCrossEdges(label, comm, comm->topo, graph, &nodeMap);
 }
 
 ncclResult_t ncclMergeAutoBuildTwoNodeMapFromHashes(int nranks, const uint64_t* rankHostHash, struct ncclMergeAutoNodeMap* map) {
