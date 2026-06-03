@@ -1147,8 +1147,24 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   ringGraph->maxChannels = MAXCHANNELS/2;
   if (mergeAutoTwoNode) {
     struct ncclMergeAutoTopoCandidate mergeAutoCandidates[NCCL_MERGE_AUTO_TOPO_COUNT];
-    NCCLCHECKGOTO(ncclMergeAutoBuildChannelCandidates(comm, ringGraph, mergeAutoCandidates), ret, fail);
-    // Dry-run only. Future metric evaluation must consume candidates before freeing them.
+    struct ncclMergeAutoRankToNodeMap mergeAutoRankToNodeMap;
+    memset(mergeAutoCandidates, 0, sizeof(mergeAutoCandidates));
+    ret = ncclMergeAutoBuildChannelCandidates(comm, ringGraph, mergeAutoCandidates);
+    if (ret != ncclSuccess) {
+      ncclMergeAutoFreeChannelCandidates(mergeAutoCandidates);
+      goto fail;
+    }
+    ret = ncclMergeAutoMapRanksToNodesFromComm(comm, &mergeAutoRankToNodeMap);
+    if (ret != ncclSuccess) {
+      ncclMergeAutoFreeChannelCandidates(mergeAutoCandidates);
+      goto fail;
+    }
+    ret = ncclMergeAutoEvaluateChannelCandidates(comm, &mergeAutoRankToNodeMap, mergeAutoCandidates);
+    if (ret != ncclSuccess) {
+      ncclMergeAutoFreeChannelCandidates(mergeAutoCandidates);
+      goto fail;
+    }
+    // Dry-run only: candidate metrics are logged, but the formal graph below is unchanged.
     ncclMergeAutoFreeChannelCandidates(mergeAutoCandidates);
   }
   NCCLCHECKGOTO(ncclTopoCompute(comm->topo, ringGraph), ret, fail);
