@@ -1148,6 +1148,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   if (mergeAutoTwoNode) {
     struct ncclMergeAutoTopoCandidate mergeAutoCandidates[NCCL_MERGE_AUTO_TOPO_COUNT];
     NCCLCHECKGOTO(ncclMergeAutoBuildChannelCandidates(comm, ringGraph, mergeAutoCandidates), ret, fail);
+    // Dry-run only. Future metric evaluation must consume candidates before freeing them.
     ncclMergeAutoFreeChannelCandidates(mergeAutoCandidates);
   }
   NCCLCHECKGOTO(ncclTopoCompute(comm->topo, ringGraph), ret, fail);

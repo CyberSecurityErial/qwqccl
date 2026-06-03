@@ -138,6 +138,9 @@ ncclResult_t ncclMergeAutoEvaluateCandidate(
     int nEdges,
     struct ncclMergeAutoMetrics* metrics);
 int ncclMergeAutoPickMergeMode(const struct ncclMergeAutoMetrics* merge0, const struct ncclMergeAutoMetrics* merge1, int thresholdPct);
+// Must be called by all ranks in the same fixed order. Candidate system builds may
+// run topology XML exchange/fusion internally. ringGraphTemplate must be a clean
+// uncomputed ring graph template.
 ncclResult_t ncclMergeAutoBuildChannelCandidates(
     struct ncclComm* comm,
     const struct ncclTopoGraph* ringGraphTemplate,

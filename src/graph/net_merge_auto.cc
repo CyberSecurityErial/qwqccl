@@ -146,24 +146,24 @@ void ncclMergeAutoFreeChannelCandidates(struct ncclMergeAutoTopoCandidate candid
   }
 }
 
-static ncclResult_t ncclMergeAutoBuildOneChannelCandidate(
+static ncclResult_t ncclMergeAutoComputeOneChannelCandidate(
     struct ncclComm* comm,
     const struct ncclTopoGraph* ringGraphTemplate,
     struct ncclMergeAutoTopoCandidate* candidate) {
-  if (comm == NULL || ringGraphTemplate == NULL || candidate == NULL) return ncclInvalidArgument;
-  if (comm->rank == 0) {
-    INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: build candidate=%s view=%s",
-      candidate->name, ncclMergeAutoMergeViewName(candidate->mergeView));
-  }
+  if (comm == NULL || ringGraphTemplate == NULL || candidate == NULL || candidate->system == NULL) return ncclInvalidArgument;
 
-  NCCLCHECK(ncclTopoGetSystemWithMergeView(comm, &candidate->system, NULL, candidate->mergeView));
-  NCCLCHECK(ncclTopoComputePaths(candidate->system, comm));
-  NCCLCHECK(ncclTopoTrimSystem(candidate->system, comm));
-  NCCLCHECK(ncclTopoComputePaths(candidate->system, comm));
-  NCCLCHECK(ncclTopoSearchInit(candidate->system));
+  ncclResult_t ret = ncclTopoComputePaths(candidate->system, comm);
+  if (ret != ncclSuccess) return ret;
+  ret = ncclTopoTrimSystem(candidate->system, comm);
+  if (ret != ncclSuccess) return ret;
+  ret = ncclTopoComputePaths(candidate->system, comm);
+  if (ret != ncclSuccess) return ret;
+  ret = ncclTopoSearchInit(candidate->system);
+  if (ret != ncclSuccess) return ret;
 
   candidate->ringGraph = *ringGraphTemplate;
-  NCCLCHECK(ncclTopoCompute(candidate->system, &candidate->ringGraph));
+  ret = ncclTopoCompute(candidate->system, &candidate->ringGraph);
+  if (ret != ncclSuccess) return ret;
   candidate->valid = 1;
 
   if (comm->rank == 0) {
@@ -181,16 +181,25 @@ ncclResult_t ncclMergeAutoBuildChannelCandidates(
     const struct ncclTopoGraph* ringGraphTemplate,
     struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT]) {
   if (comm == NULL || ringGraphTemplate == NULL || candidates == NULL) return ncclInvalidArgument;
+  if (ringGraphTemplate->pattern != NCCL_TOPO_PATTERN_RING || ringGraphTemplate->nChannels != 0) return ncclInvalidArgument;
   ncclMergeAutoInitChannelCandidates(candidates);
   if (!ncclIbMergeNicsAutoEnabled()) return ncclSuccess;
   if (!ncclMergeAutoIsIbNet(comm)) return ncclSuccess;
 
   for (int c = 0; c < NCCL_MERGE_AUTO_TOPO_COUNT; c++) {
     struct ncclMergeAutoTopoCandidate* candidate = candidates + c;
-    ncclResult_t ret = ncclMergeAutoBuildOneChannelCandidate(comm, ringGraphTemplate, candidate);
+    if (comm->rank == 0) {
+      INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: build candidate=%s view=%s",
+        candidate->name, ncclMergeAutoMergeViewName(candidate->mergeView));
+    }
+
+    ncclResult_t ret = ncclTopoGetSystemWithMergeView(comm, &candidate->system, NULL, candidate->mergeView);
+    if (ret != ncclSuccess) return ret;
+
+    ret = ncclMergeAutoComputeOneChannelCandidate(comm, ringGraphTemplate, candidate);
     if (ret != ncclSuccess) {
       if (comm->rank == 0) {
-        INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: candidate=%s valid=0 reason=build_failed ret=%d",
+        INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: candidate=%s valid=0 reason=channel_build_failed ret=%d",
           candidate->name, ret);
       }
       if (candidate->system != NULL) {
