@@ -1286,8 +1286,8 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   }
 
   {
-    struct ncclMergeAutoNodeMap mergeAutoNodeMap;
-    NCCLCHECKGOTO(ncclMergeAutoCheckRuntime(comm, minLocalNetCount, &mergeAutoNodeMap, NULL), ret, fail);
+    struct ncclMergeAutoRankToNodeMap mergeAutoRankToNodeMap;
+    NCCLCHECKGOTO(ncclMergeAutoCheckRuntime(comm, minLocalNetCount, &mergeAutoRankToNodeMap, NULL), ret, fail);
   }
 
   if (rank == 0) {

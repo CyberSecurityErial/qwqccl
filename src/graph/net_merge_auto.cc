@@ -44,7 +44,7 @@ ncclResult_t ncclIbMergeNicsAutoLogEnv() {
   return ncclSuccess;
 }
 
-ncclResult_t ncclMergeAutoBuildNodeMapFromComm(struct ncclComm* comm, struct ncclMergeAutoNodeMap* map) {
+ncclResult_t ncclMergeAutoMapRanksToNodesFromComm(struct ncclComm* comm, struct ncclMergeAutoRankToNodeMap* map) {
   if (comm == NULL || map == NULL || comm->peerInfo == NULL) return ncclInvalidArgument;
   if (comm->nRanks <= 0 || comm->nRanks > NCCL_MERGE_AUTO_MAX_RANKS) return ncclInvalidArgument;
 
@@ -52,21 +52,21 @@ ncclResult_t ncclMergeAutoBuildNodeMapFromComm(struct ncclComm* comm, struct ncc
   if (rankHostHash == NULL) return ncclSystemError;
   for (int r = 0; r < comm->nRanks; r++) rankHostHash[r] = comm->peerInfo[r].hostHash;
 
-  ncclResult_t ret = ncclMergeAutoBuildTwoNodeMapFromHashes(comm->nRanks, rankHostHash, map);
+  ncclResult_t ret = ncclMergeAutoMapRanksToNodes(comm->nRanks, rankHostHash, map);
   free(rankHostHash);
   return ret;
 }
 
-ncclResult_t ncclMergeAutoCheckTwoNode(struct ncclComm* comm, struct ncclMergeAutoNodeMap* nodeMap, int* isTwoNode) {
+ncclResult_t ncclMergeAutoCheckTwoNode(struct ncclComm* comm, struct ncclMergeAutoRankToNodeMap* rankToNodeMap, int* isTwoNode) {
   if (isTwoNode == NULL) return ncclInvalidArgument;
   *isTwoNode = 0;
   if (!ncclIbMergeNicsAutoEnabled()) return ncclSuccess;
   if (comm == NULL) return ncclInvalidArgument;
   if (comm->nRanks <= 0 || comm->nRanks > NCCL_MERGE_AUTO_MAX_RANKS) return ncclSuccess;
 
-  struct ncclMergeAutoNodeMap localNodeMap;
-  struct ncclMergeAutoNodeMap* map = nodeMap != NULL ? nodeMap : &localNodeMap;
-  NCCLCHECK(ncclMergeAutoBuildNodeMapFromComm(comm, map));
+  struct ncclMergeAutoRankToNodeMap localRankToNodeMap;
+  struct ncclMergeAutoRankToNodeMap* map = rankToNodeMap != NULL ? rankToNodeMap : &localRankToNodeMap;
+  NCCLCHECK(ncclMergeAutoMapRanksToNodesFromComm(comm, map));
   *isTwoNode = (map->valid && map->numNodes == 2) ? 1 : 0;
   return ncclSuccess;
 }
@@ -79,22 +79,22 @@ static bool ncclMergeAutoIsIbNet(struct ncclComm* comm) {
 ncclResult_t ncclMergeAutoCheckRuntime(
     struct ncclComm* comm,
     int minNetDeviceCount,
-    struct ncclMergeAutoNodeMap* nodeMap,
+    struct ncclMergeAutoRankToNodeMap* rankToNodeMap,
     int* shouldRun) {
   if (shouldRun != NULL) *shouldRun = 0;
   if (!ncclIbMergeNicsAutoEnabled()) return ncclSuccess;
-  if (comm == NULL || nodeMap == NULL) return ncclInvalidArgument;
+  if (comm == NULL || rankToNodeMap == NULL) return ncclInvalidArgument;
 
   if (comm->nRanks <= 0 || comm->nRanks > NCCL_MERGE_AUTO_MAX_RANKS) {
     if (comm->rank == 0) INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: skipped reason=nranks_unsupported nranks=%d max=%d", comm->nRanks, NCCL_MERGE_AUTO_MAX_RANKS);
     return ncclSuccess;
   }
 
-  ncclResult_t ret = ncclMergeAutoBuildNodeMapFromComm(comm, nodeMap);
+  ncclResult_t ret = ncclMergeAutoMapRanksToNodesFromComm(comm, rankToNodeMap);
   if (ret != ncclSuccess) return ret;
 
-  if (!nodeMap->valid || nodeMap->numNodes != 2) {
-    if (comm->rank == 0) INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: skipped reason=not_two_nodes nodes=%d nranks=%d", nodeMap->numNodes, comm->nRanks);
+  if (!rankToNodeMap->valid || rankToNodeMap->numNodes != 2) {
+    if (comm->rank == 0) INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: skipped reason=not_two_nodes nodes=%d nranks=%d", rankToNodeMap->numNodes, comm->nRanks);
     return ncclSuccess;
   }
 
@@ -287,11 +287,11 @@ ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
     struct ncclComm* comm,
     struct ncclTopoSystem* system,
     const struct ncclTopoGraph* graph,
-    const struct ncclMergeAutoNodeMap* nodeMap) {
+    const struct ncclMergeAutoRankToNodeMap* rankToNodeMap) {
   if (!ncclIbMergeNicsAutoDumpEnabled()) return ncclSuccess;
   if (label == NULL) label = "graph";
-  if (system == NULL || graph == NULL || nodeMap == NULL || graph->nChannels < 0 || graph->nChannels > MAXCHANNELS) return ncclInvalidArgument;
-  if (!nodeMap->valid || nodeMap->numNodes != 2) return ncclSuccess;
+  if (system == NULL || graph == NULL || rankToNodeMap == NULL || graph->nChannels < 0 || graph->nChannels > MAXCHANNELS) return ncclInvalidArgument;
+  if (!rankToNodeMap->valid || rankToNodeMap->numNodes != 2) return ncclSuccess;
   if (graph->nChannels == 0) return ncclSuccess;
 
   int ngpus = system->nodes[GPU].count;
@@ -311,7 +311,7 @@ ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
   ncclResult_t ret = ncclMergeAutoExtractGraphChannelRings(system, graph, rings, rankStorage, graph->nChannels, ngpus, &channels);
   int nEdges = 0;
   if (ret == ncclSuccess) {
-    ret = ncclMergeAutoExtractCrossEdges(&channels, nodeMap, edges, graph->nChannels * ngpus, &nEdges);
+    ret = ncclMergeAutoGetCrossNodeEdges(&channels, rankToNodeMap, edges, graph->nChannels * ngpus, &nEdges);
   }
   if (ret == ncclSuccess) {
     for (int e = 0; e < nEdges; e++) {
@@ -336,10 +336,10 @@ ncclResult_t ncclMergeAutoDumpGraphCrossEdgesFromComm(const char* label, struct 
   if (comm == NULL || graph == NULL) return ncclInvalidArgument;
   if (comm->nRanks <= 0 || comm->nRanks > NCCL_MERGE_AUTO_MAX_RANKS) return ncclSuccess;
 
-  struct ncclMergeAutoNodeMap nodeMap;
-  ncclResult_t ret = ncclMergeAutoBuildNodeMapFromComm(comm, &nodeMap);
+  struct ncclMergeAutoRankToNodeMap rankToNodeMap;
+  ncclResult_t ret = ncclMergeAutoMapRanksToNodesFromComm(comm, &rankToNodeMap);
   if (ret != ncclSuccess) return ret;
-  return ncclMergeAutoDumpGraphCrossEdges(label, comm, comm->topo, graph, &nodeMap);
+  return ncclMergeAutoDumpGraphCrossEdges(label, comm, comm->topo, graph, &rankToNodeMap);
 }
 
 ncclResult_t ncclMergeAutoDumpPostsetRingEdges(
@@ -388,7 +388,7 @@ ncclResult_t ncclMergeAutoDumpPostsetRingEdges(
   return ncclSuccess;
 }
 
-ncclResult_t ncclMergeAutoBuildTwoNodeMapFromHashes(int nranks, const uint64_t* rankHostHash, struct ncclMergeAutoNodeMap* map) {
+ncclResult_t ncclMergeAutoMapRanksToNodes(int nranks, const uint64_t* rankHostHash, struct ncclMergeAutoRankToNodeMap* map) {
   if (rankHostHash == NULL || map == NULL || nranks <= 0 || nranks > NCCL_MERGE_AUTO_MAX_RANKS) return ncclInvalidArgument;
 
   memset(map, 0, sizeof(*map));
@@ -420,15 +420,15 @@ ncclResult_t ncclMergeAutoBuildTwoNodeMapFromHashes(int nranks, const uint64_t* 
   return ncclSuccess;
 }
 
-ncclResult_t ncclMergeAutoExtractCrossEdges(
+ncclResult_t ncclMergeAutoGetCrossNodeEdges(
     const struct ncclMergeAutoChannelSet* channels,
-    const struct ncclMergeAutoNodeMap* nodeMap,
+    const struct ncclMergeAutoRankToNodeMap* rankToNodeMap,
     struct ncclMergeAutoCrossEdge* edges,
     int maxEdges,
     int* nEdges) {
-  if (channels == NULL || nodeMap == NULL || edges == NULL || nEdges == NULL || maxEdges < 0) return ncclInvalidArgument;
+  if (channels == NULL || rankToNodeMap == NULL || edges == NULL || nEdges == NULL || maxEdges < 0) return ncclInvalidArgument;
   if (channels->nChannels < 0 || (channels->nChannels > 0 && channels->rings == NULL)) return ncclInvalidArgument;
-  if (!nodeMap->valid || nodeMap->numNodes != 2) return ncclInvalidArgument;
+  if (!rankToNodeMap->valid || rankToNodeMap->numNodes != 2) return ncclInvalidArgument;
 
   *nEdges = 0;
   for (int c = 0; c < channels->nChannels; c++) {
@@ -438,9 +438,9 @@ ncclResult_t ncclMergeAutoExtractCrossEdges(
     for (int i = 0; i < ring->nRanks; i++) {
       int src = ring->ranks[i];
       int dst = ring->ranks[(i + 1) % ring->nRanks];
-      if (src < 0 || src >= nodeMap->nranks || dst < 0 || dst >= nodeMap->nranks) return ncclInvalidArgument;
-      int srcNode = nodeMap->rankToNode[src];
-      int dstNode = nodeMap->rankToNode[dst];
+      if (src < 0 || src >= rankToNodeMap->nranks || dst < 0 || dst >= rankToNodeMap->nranks) return ncclInvalidArgument;
+      int srcNode = rankToNodeMap->rankToNode[src];
+      int dstNode = rankToNodeMap->rankToNode[dst];
       if (srcNode < 0 || dstNode < 0) return ncclInvalidArgument;
       if (srcNode == dstNode) continue;
       if (srcNode > 1 || dstNode > 1) return ncclInvalidArgument;
@@ -461,37 +461,36 @@ ncclResult_t ncclMergeAutoExtractCrossEdges(
   return ncclSuccess;
 }
 
-static ncclResult_t ncclMergeAutoAddUnique(int id, double bw, int* ids, double* bws, int* count) {
-  if (id < 0) return ncclSuccess;
+struct ncclMergeAutoRailSet {
+  int rails[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
+  double bw[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
+  int n;
+};
+
+static ncclResult_t ncclMergeAutoRailSetAdd(struct ncclMergeAutoRailSet* set, int rail, double bw) {
+  if (set == NULL) return ncclInvalidArgument;
+  if (rail < 0) return ncclSuccess;
   if (bw <= 0.0) bw = 1.0;
-  for (int i = 0; i < *count; i++) {
-    if (ids[i] == id) {
-      if (bws[i] < bw) bws[i] = bw;
+  for (int i = 0; i < set->n; i++) {
+    if (set->rails[i] == rail) {
+      if (set->bw[i] < bw) set->bw[i] = bw;
       return ncclSuccess;
     }
   }
-  if (*count == NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS) return ncclInvalidArgument;
-  ids[*count] = id;
-  bws[*count] = bw;
-  (*count)++;
+  if (set->n == NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS) return ncclInvalidArgument;
+  set->rails[set->n] = rail;
+  set->bw[set->n] = bw;
+  set->n++;
   return ncclSuccess;
 }
 
-static double ncclMergeAutoSumBw(const double* bws, int count) {
+static double ncclMergeAutoRailSetBw(const struct ncclMergeAutoRailSet* set) {
   double sum = 0.0;
-  for (int i = 0; i < count; i++) sum += bws[i];
+  for (int i = 0; i < set->n; i++) sum += set->bw[i];
   return sum;
 }
 
-static ncclResult_t ncclMergeAutoMergeUniqueSets(const int* ids, const double* bws, int count, int* totalIds, double* totalBws, int* totalCount) {
-  for (int i = 0; i < count; i++) {
-    ncclResult_t ret = ncclMergeAutoAddUnique(ids[i], bws[i], totalIds, totalBws, totalCount);
-    if (ret != ncclSuccess) return ret;
-  }
-  return ncclSuccess;
-}
-
-ncclResult_t ncclMergeAutoAggregateMetrics(
+ncclResult_t ncclMergeAutoEvaluateCandidate(
     int merge,
     const struct ncclMergeAutoChannelSet* channels,
     const struct ncclMergeAutoCrossEdge* edges,
@@ -502,78 +501,41 @@ ncclResult_t ncclMergeAutoAggregateMetrics(
   memset(metrics, 0, sizeof(*metrics));
   metrics->merge = merge;
   metrics->valid = 1;
-  metrics->nChannels = channels->nChannels;
-  metrics->nCrossEdges = nEdges;
+  metrics->nEdges = nEdges;
 
-  int net01[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
-  int net10[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
-  int netTotal[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
-  double netBw01[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
-  double netBw10[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
-  double netBwTotal[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
-  int rail01[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
-  int rail10[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
-  int railTotal[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
-  double railBw01[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
-  double railBw10[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
-  double railBwTotal[NCCL_MERGE_AUTO_MAX_UNIQUE_RAILS];
-  int nNet01 = 0, nNet10 = 0, nNetTotal = 0;
-  int nRail01 = 0, nRail10 = 0, nRailTotal = 0;
+  struct ncclMergeAutoRailSet rails[2];
+  memset(rails, 0, sizeof(rails));
 
   for (int e = 0; e < nEdges; e++) {
     const struct ncclMergeAutoCrossEdge* edge = edges + e;
     if (edge->direction != 0 && edge->direction != 1) return ncclInvalidArgument;
-    int syntheticId = edge->channelId * 2 + edge->direction;
-    int netDev = edge->netDev >= 0 ? edge->netDev : syntheticId;
-    if (edge->direction == 0) {
-      ncclResult_t ret = ncclMergeAutoAddUnique(netDev, edge->netBw, net01, netBw01, &nNet01);
-      if (ret != ncclSuccess) return ret;
-    } else {
-      ncclResult_t ret = ncclMergeAutoAddUnique(netDev, edge->netBw, net10, netBw10, &nNet10);
-      if (ret != ncclSuccess) return ret;
+    if (edge->nPhysRails < 0 || edge->nPhysRails > NCCL_MERGE_AUTO_MAX_PHYS_RAILS_PER_EDGE) return ncclInvalidArgument;
+
+    int dir = edge->direction;
+    if (edge->nPhysRails == 0) {
+      int rail = edge->netDev >= 0 ? edge->netDev : edge->channelId * 2 + dir;
+      NCCLCHECK(ncclMergeAutoRailSetAdd(&rails[dir], rail, edge->netBw));
+      continue;
     }
 
-    if (edge->nPhysRails < 0 || edge->nPhysRails > NCCL_MERGE_AUTO_MAX_PHYS_RAILS_PER_EDGE) return ncclInvalidArgument;
-    if (edge->nPhysRails == 0) {
-      ncclResult_t ret = edge->direction == 0 ?
-        ncclMergeAutoAddUnique(netDev, edge->netBw, rail01, railBw01, &nRail01) :
-        ncclMergeAutoAddUnique(netDev, edge->netBw, rail10, railBw10, &nRail10);
-      if (ret != ncclSuccess) return ret;
-    } else {
-      for (int r = 0; r < edge->nPhysRails; r++) {
-        ncclResult_t ret = edge->direction == 0 ?
-          ncclMergeAutoAddUnique(edge->physRails[r], edge->physRailBw[r], rail01, railBw01, &nRail01) :
-          ncclMergeAutoAddUnique(edge->physRails[r], edge->physRailBw[r], rail10, railBw10, &nRail10);
-        if (ret != ncclSuccess) return ret;
-      }
+    for (int r = 0; r < edge->nPhysRails; r++) {
+      NCCLCHECK(ncclMergeAutoRailSetAdd(&rails[dir], edge->physRails[r], edge->physRailBw[r]));
     }
   }
 
-  ncclResult_t ret = ncclMergeAutoMergeUniqueSets(net01, netBw01, nNet01, netTotal, netBwTotal, &nNetTotal);
-  if (ret != ncclSuccess) return ret;
-  ret = ncclMergeAutoMergeUniqueSets(net10, netBw10, nNet10, netTotal, netBwTotal, &nNetTotal);
-  if (ret != ncclSuccess) return ret;
-  ret = ncclMergeAutoMergeUniqueSets(rail01, railBw01, nRail01, railTotal, railBwTotal, &nRailTotal);
-  if (ret != ncclSuccess) return ret;
-  ret = ncclMergeAutoMergeUniqueSets(rail10, railBw10, nRail10, railTotal, railBwTotal, &nRailTotal);
-  if (ret != ncclSuccess) return ret;
-
-  metrics->uniqueNetDevs01 = nNet01;
-  metrics->uniqueNetDevs10 = nNet10;
-  metrics->uniqueNetDevsTotal = nNetTotal;
-  metrics->uniqueRails01 = nRail01;
-  metrics->uniqueRails10 = nRail10;
-  metrics->uniqueRailsTotal = nRailTotal;
-  metrics->dirBw01 = ncclMergeAutoSumBw(railBw01, nRail01);
-  metrics->dirBw10 = ncclMergeAutoSumBw(railBw10, nRail10);
-  metrics->bidirBw = 2.0 * (metrics->dirBw01 < metrics->dirBw10 ? metrics->dirBw01 : metrics->dirBw10);
+  metrics->uniqueRails01 = rails[0].n;
+  metrics->uniqueRails10 = rails[1].n;
+  metrics->dirBw01 = ncclMergeAutoRailSetBw(&rails[0]);
+  metrics->dirBw10 = ncclMergeAutoRailSetBw(&rails[1]);
+  double minBw = metrics->dirBw01 < metrics->dirBw10 ? metrics->dirBw01 : metrics->dirBw10;
   double maxBw = metrics->dirBw01 > metrics->dirBw10 ? metrics->dirBw01 : metrics->dirBw10;
-  metrics->balance = maxBw > 0.0 ? (metrics->bidirBw / 2.0) / maxBw : 0.0;
+  metrics->bidirBw = 2.0 * minBw;
+  metrics->balance = maxBw > 0.0 ? minBw / maxBw : 0.0;
   metrics->score = metrics->bidirBw;
   return ncclSuccess;
 }
 
-int ncclMergeAutoSelect(const struct ncclMergeAutoMetrics* merge0, const struct ncclMergeAutoMetrics* merge1, int thresholdPct) {
+int ncclMergeAutoPickMergeMode(const struct ncclMergeAutoMetrics* merge0, const struct ncclMergeAutoMetrics* merge1, int thresholdPct) {
   if (thresholdPct <= 0) thresholdPct = 110;
   if ((merge0 == NULL || !merge0->valid) && (merge1 == NULL || !merge1->valid)) return NCCL_IB_MERGE_NICS_MODE_MERGED;
   if (merge0 == NULL || !merge0->valid) return NCCL_IB_MERGE_NICS_MODE_MERGED;

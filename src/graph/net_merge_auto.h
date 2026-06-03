@@ -26,7 +26,7 @@ enum ncclIbMergeNicsMode {
   NCCL_IB_MERGE_NICS_MODE_AUTO = 2
 };
 
-struct ncclMergeAutoNodeMap {
+struct ncclMergeAutoRankToNodeMap {
   int nranks;
   int numNodes;
   int rankToNode[NCCL_MERGE_AUTO_MAX_RANKS];
@@ -63,12 +63,7 @@ struct ncclMergeAutoCrossEdge {
 struct ncclMergeAutoMetrics {
   int merge;
   int valid;
-  int nChannels;
-  int nCrossEdges;
-  int uniqueNetDevsTotal;
-  int uniqueNetDevs01;
-  int uniqueNetDevs10;
-  int uniqueRailsTotal;
+  int nEdges;
   int uniqueRails01;
   int uniqueRails10;
   double dirBw01;
@@ -83,7 +78,7 @@ bool ncclIbMergeNicsAutoEnabled();
 int ncclIbMergeNicsAutoThresholdPct();
 bool ncclIbMergeNicsAutoDumpEnabled();
 ncclResult_t ncclIbMergeNicsAutoLogEnv();
-ncclResult_t ncclMergeAutoCheckTwoNode(struct ncclComm* comm, struct ncclMergeAutoNodeMap* nodeMap, int* isTwoNode);
+ncclResult_t ncclMergeAutoCheckTwoNode(struct ncclComm* comm, struct ncclMergeAutoRankToNodeMap* rankToNodeMap, int* isTwoNode);
 ncclResult_t ncclMergeAutoExtractGraphChannelRings(
     struct ncclTopoSystem* system,
     const struct ncclTopoGraph* graph,
@@ -99,7 +94,7 @@ ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
     struct ncclComm* comm,
     struct ncclTopoSystem* system,
     const struct ncclTopoGraph* graph,
-    const struct ncclMergeAutoNodeMap* nodeMap);
+    const struct ncclMergeAutoRankToNodeMap* rankToNodeMap);
 ncclResult_t ncclMergeAutoDumpGraphCrossEdgesFromComm(const char* label, struct ncclComm* comm, const struct ncclTopoGraph* graph);
 ncclResult_t ncclMergeAutoDumpPostsetRingEdges(
     const char* label,
@@ -108,25 +103,25 @@ ncclResult_t ncclMergeAutoDumpPostsetRingEdges(
     struct ncclTopoRanks** allTopoRanks,
     const int* firstRanks,
     int nChannels);
-ncclResult_t ncclMergeAutoBuildTwoNodeMapFromHashes(int nranks, const uint64_t* rankHostHash, struct ncclMergeAutoNodeMap* map);
-ncclResult_t ncclMergeAutoBuildNodeMapFromComm(struct ncclComm* comm, struct ncclMergeAutoNodeMap* map);
+ncclResult_t ncclMergeAutoMapRanksToNodes(int nranks, const uint64_t* rankHostHash, struct ncclMergeAutoRankToNodeMap* map);
+ncclResult_t ncclMergeAutoMapRanksToNodesFromComm(struct ncclComm* comm, struct ncclMergeAutoRankToNodeMap* map);
 ncclResult_t ncclMergeAutoCheckRuntime(
     struct ncclComm* comm,
     int minNetDeviceCount,
-    struct ncclMergeAutoNodeMap* nodeMap,
+    struct ncclMergeAutoRankToNodeMap* rankToNodeMap,
     int* shouldRun);
-ncclResult_t ncclMergeAutoExtractCrossEdges(
+ncclResult_t ncclMergeAutoGetCrossNodeEdges(
     const struct ncclMergeAutoChannelSet* channels,
-    const struct ncclMergeAutoNodeMap* nodeMap,
+    const struct ncclMergeAutoRankToNodeMap* rankToNodeMap,
     struct ncclMergeAutoCrossEdge* edges,
     int maxEdges,
     int* nEdges);
-ncclResult_t ncclMergeAutoAggregateMetrics(
+ncclResult_t ncclMergeAutoEvaluateCandidate(
     int merge,
     const struct ncclMergeAutoChannelSet* channels,
     const struct ncclMergeAutoCrossEdge* edges,
     int nEdges,
     struct ncclMergeAutoMetrics* metrics);
-int ncclMergeAutoSelect(const struct ncclMergeAutoMetrics* merge0, const struct ncclMergeAutoMetrics* merge1, int thresholdPct);
+int ncclMergeAutoPickMergeMode(const struct ncclMergeAutoMetrics* merge0, const struct ncclMergeAutoMetrics* merge1, int thresholdPct);
 
 #endif
