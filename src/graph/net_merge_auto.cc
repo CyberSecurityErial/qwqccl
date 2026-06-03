@@ -255,6 +255,19 @@ static void ncclMergeAutoFormatPhysRails(const struct ncclMergeAutoCrossEdge* ed
   }
 }
 
+static void ncclMergeAutoDumpResolvedEdge(const char* label, struct ncclComm* comm, const struct ncclMergeAutoCrossEdge* edge) {
+  char phys[256];
+  ncclMergeAutoFormatPhysRails(edge, phys, sizeof(phys));
+  const char* netName = (comm != NULL && comm->ncclNet != NULL && comm->ncclNet->name != NULL) ? comm->ncclNet->name : "unknown";
+  if (edge->netDev >= 0) {
+    INFO(NCCL_GRAPH|NCCL_NET, "MergeAutoDump: cand=%s ch=%02d edge=%d->%d dir=%d->%d net=%s/%d phys=%s bw=1",
+      label, edge->channelId, edge->srcRank, edge->dstRank, edge->srcNode, edge->dstNode, netName, edge->netDev, phys);
+  } else {
+    INFO(NCCL_GRAPH|NCCL_NET, "MergeAutoDump: cand=%s ch=%02d edge=%d->%d dir=%d->%d net=unknown phys=%s bw=1",
+      label, edge->channelId, edge->srcRank, edge->dstRank, edge->srcNode, edge->dstNode, phys);
+  }
+}
+
 ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
     const char* label,
     struct ncclComm* comm,
@@ -294,16 +307,7 @@ ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
         if (resolveRet != ncclSuccess) ret = resolveRet;
       }
       if (ret != ncclSuccess) break;
-      char phys[256];
-      ncclMergeAutoFormatPhysRails(edge, phys, sizeof(phys));
-      const char* netName = (comm != NULL && comm->ncclNet != NULL && comm->ncclNet->name != NULL) ? comm->ncclNet->name : "unknown";
-      if (edge->netDev >= 0) {
-        INFO(NCCL_GRAPH|NCCL_NET, "MergeAutoDump: cand=%s ch=%02d edge=%d->%d dir=%d->%d net=%s/%d phys=%s bw=1",
-          label, edge->channelId, edge->srcRank, edge->dstRank, edge->srcNode, edge->dstNode, netName, edge->netDev, phys);
-      } else {
-        INFO(NCCL_GRAPH|NCCL_NET, "MergeAutoDump: cand=%s ch=%02d edge=%d->%d dir=%d->%d net=unknown phys=%s bw=1",
-          label, edge->channelId, edge->srcRank, edge->dstRank, edge->srcNode, edge->dstNode, phys);
-      }
+      ncclMergeAutoDumpResolvedEdge(label, comm, edge);
     }
   }
 
@@ -322,6 +326,52 @@ ncclResult_t ncclMergeAutoDumpGraphCrossEdgesFromComm(const char* label, struct 
   ncclResult_t ret = ncclMergeAutoBuildNodeMapFromComm(comm, &nodeMap);
   if (ret != ncclSuccess) return ret;
   return ncclMergeAutoDumpGraphCrossEdges(label, comm, comm->topo, graph, &nodeMap);
+}
+
+ncclResult_t ncclMergeAutoDumpPostsetRingEdges(
+    const char* label,
+    struct ncclComm* comm,
+    const struct ncclTopoGraph* graph,
+    struct ncclTopoRanks** allTopoRanks,
+    const int* firstRanks,
+    int nChannels) {
+  if (!ncclIbMergeNicsAutoDumpEnabled()) return ncclSuccess;
+  if (label == NULL) label = "postset";
+  if (comm == NULL || graph == NULL || allTopoRanks == NULL || firstRanks == NULL) return ncclInvalidArgument;
+  if (nChannels < 0 || nChannels > MAXCHANNELS) return ncclInvalidArgument;
+  if (comm->nNodes != 2 || comm->rankToNode == NULL || comm->node < 0 || comm->node >= comm->nNodes) return ncclSuccess;
+
+  int node = comm->node;
+  if (firstRanks[node] != comm->rank) return ncclSuccess;
+  int nextNode = (node + 1) % comm->nNodes;
+  int srcFirstRank = firstRanks[node];
+  int dstFirstRank = firstRanks[nextNode];
+  if (srcFirstRank < 0 || srcFirstRank >= comm->nRanks || dstFirstRank < 0 || dstFirstRank >= comm->nRanks) return ncclInvalidArgument;
+  if (allTopoRanks[srcFirstRank] == NULL || allTopoRanks[dstFirstRank] == NULL) return ncclInvalidArgument;
+
+  for (int c = 0; c < nChannels; c++) {
+    int src = allTopoRanks[srcFirstRank]->ringSend[c];
+    int dst = allTopoRanks[dstFirstRank]->ringRecv[c];
+    if (src < 0 || src >= comm->nRanks || dst < 0 || dst >= comm->nRanks) return ncclInvalidArgument;
+    int srcNode = comm->rankToNode[src];
+    int dstNode = comm->rankToNode[dst];
+    if (srcNode < 0 || srcNode >= comm->nNodes || dstNode < 0 || dstNode >= comm->nNodes) return ncclInvalidArgument;
+    if (srcNode == dstNode) continue;
+
+    struct ncclMergeAutoCrossEdge edge;
+    memset(&edge, 0, sizeof(edge));
+    edge.channelId = c;
+    edge.srcRank = src;
+    edge.dstRank = dst;
+    edge.srcNode = srcNode;
+    edge.dstNode = dstNode;
+    edge.direction = (srcNode == 0 && dstNode == 1) ? 0 : 1;
+    edge.netDev = -1;
+    edge.netBw = 1.0;
+    NCCLCHECK(ncclMergeAutoResolveNetDevForEdge(comm, graph, &edge));
+    ncclMergeAutoDumpResolvedEdge(label, comm, &edge);
+  }
+  return ncclSuccess;
 }
 
 ncclResult_t ncclMergeAutoBuildTwoNodeMapFromHashes(int nranks, const uint64_t* rankHostHash, struct ncclMergeAutoNodeMap* map) {

@@ -1439,7 +1439,9 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   comm->isOneRPN = (comm->maxLocalRanks == 1);
 
   NCCLCHECKGOTO(ncclCalloc(&rings, nranks*MAXCHANNELS), ret, fail);
+  int nChannelsPostsetInput = comm->nChannels;
   NCCLCHECKGOTO(ncclTopoPostset(comm, nodesFirstRank, nodesTreePatterns, allTopoRanks, rings, graphs, parent), ret, fail);
+  NCCLCHECKGOTO(ncclMergeAutoDumpPostsetRingEdges("default-postset", comm, ringGraph, allTopoRanks, nodesFirstRank, nChannelsPostsetInput), ret, fail);
   // AllGather3 - end
   timers[TIMER_INIT_ALLGATHER] += clockNano() - timers[TIMER_INIT_CONNECT];
 

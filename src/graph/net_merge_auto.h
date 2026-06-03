@@ -17,6 +17,7 @@
 
 struct ncclTopoGraph;
 struct ncclTopoSystem;
+struct ncclTopoRanks;
 struct ncclComm;
 
 enum ncclIbMergeNicsMode {
@@ -99,6 +100,13 @@ ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
     const struct ncclTopoGraph* graph,
     const struct ncclMergeAutoNodeMap* nodeMap);
 ncclResult_t ncclMergeAutoDumpGraphCrossEdgesFromComm(const char* label, struct ncclComm* comm, const struct ncclTopoGraph* graph);
+ncclResult_t ncclMergeAutoDumpPostsetRingEdges(
+    const char* label,
+    struct ncclComm* comm,
+    const struct ncclTopoGraph* graph,
+    struct ncclTopoRanks** allTopoRanks,
+    const int* firstRanks,
+    int nChannels);
 ncclResult_t ncclMergeAutoBuildTwoNodeMapFromHashes(int nranks, const uint64_t* rankHostHash, struct ncclMergeAutoNodeMap* map);
 ncclResult_t ncclMergeAutoBuildNodeMapFromComm(struct ncclComm* comm, struct ncclMergeAutoNodeMap* map);
 ncclResult_t ncclMergeAutoCheckRuntime(
