@@ -994,6 +994,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   int maxLocalNetCount = 0;
   int minLocalCollNetCount = INT_MAX;
   int maxLocalCollNetCount = 0;
+  int mergeAutoTwoNode = 0;
 
   timers[TIMER_INIT_ALLGATHER] = clockNano();
   // AllGather1 - begin
@@ -1019,6 +1020,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   }
   // AllGather1 - end
   timers[TIMER_INIT_ALLGATHER] = clockNano() - timers[TIMER_INIT_ALLGATHER];
+  NCCLCHECKGOTO(ncclMergeAutoCheckTwoNode(comm, NULL, &mergeAutoTwoNode), ret, fail);
 
   // Check for MNNVL support
   NCCLCHECKGOTO(ncclGetUserP2pLevel(&p2pLevel), ret, fail);
@@ -1145,8 +1147,10 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   ringGraph->maxChannels = MAXCHANNELS/2;
   NCCLCHECKGOTO(ncclTopoCompute(comm->topo, ringGraph), ret, fail);
   NCCLCHECKGOTO(ncclTopoPrintGraph(comm->topo, ringGraph), ret, fail);
-  NCCLCHECKGOTO(ncclMergeAutoDumpGraphChannelRings("default", comm->topo, ringGraph), ret, fail);
-  NCCLCHECKGOTO(ncclMergeAutoDumpGraphCrossEdgesFromComm("default", comm, ringGraph), ret, fail);
+  if (mergeAutoTwoNode) {
+    NCCLCHECKGOTO(ncclMergeAutoDumpGraphChannelRings("default", comm->topo, ringGraph), ret, fail);
+    NCCLCHECKGOTO(ncclMergeAutoDumpGraphCrossEdgesFromComm("default", comm, ringGraph), ret, fail);
+  }
 
   memset(treeGraph, 0, sizeof(struct ncclTopoGraph));
   treeGraph->id = 1;
@@ -1441,7 +1445,9 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   NCCLCHECKGOTO(ncclCalloc(&rings, nranks*MAXCHANNELS), ret, fail);
   int nChannelsPostsetInput = comm->nChannels;
   NCCLCHECKGOTO(ncclTopoPostset(comm, nodesFirstRank, nodesTreePatterns, allTopoRanks, rings, graphs, parent), ret, fail);
-  NCCLCHECKGOTO(ncclMergeAutoDumpPostsetRingEdges("default-postset", comm, ringGraph, allTopoRanks, nodesFirstRank, nChannelsPostsetInput), ret, fail);
+  if (mergeAutoTwoNode) {
+    NCCLCHECKGOTO(ncclMergeAutoDumpPostsetRingEdges("default-postset", comm, ringGraph, allTopoRanks, nodesFirstRank, nChannelsPostsetInput), ret, fail);
+  }
   // AllGather3 - end
   timers[TIMER_INIT_ALLGATHER] += clockNano() - timers[TIMER_INIT_CONNECT];
 

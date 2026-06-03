@@ -83,6 +83,7 @@ bool ncclIbMergeNicsAutoEnabled();
 int ncclIbMergeNicsAutoThresholdPct();
 bool ncclIbMergeNicsAutoDumpEnabled();
 ncclResult_t ncclIbMergeNicsAutoLogEnv();
+ncclResult_t ncclMergeAutoCheckTwoNode(struct ncclComm* comm, struct ncclMergeAutoNodeMap* nodeMap, int* isTwoNode);
 ncclResult_t ncclMergeAutoExtractGraphChannelRings(
     struct ncclTopoSystem* system,
     const struct ncclTopoGraph* graph,

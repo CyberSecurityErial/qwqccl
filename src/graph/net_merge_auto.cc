@@ -33,7 +33,7 @@ int ncclIbMergeNicsAutoThresholdPct() {
 }
 
 bool ncclIbMergeNicsAutoDumpEnabled() {
-  return ncclParamIbMergeNicsAutoDump() != 0;
+  return ncclIbMergeNicsAutoEnabled() && ncclParamIbMergeNicsAutoDump() != 0;
 }
 
 ncclResult_t ncclIbMergeNicsAutoLogEnv() {
@@ -55,6 +55,20 @@ ncclResult_t ncclMergeAutoBuildNodeMapFromComm(struct ncclComm* comm, struct ncc
   ncclResult_t ret = ncclMergeAutoBuildTwoNodeMapFromHashes(comm->nRanks, rankHostHash, map);
   free(rankHostHash);
   return ret;
+}
+
+ncclResult_t ncclMergeAutoCheckTwoNode(struct ncclComm* comm, struct ncclMergeAutoNodeMap* nodeMap, int* isTwoNode) {
+  if (isTwoNode == NULL) return ncclInvalidArgument;
+  *isTwoNode = 0;
+  if (!ncclIbMergeNicsAutoEnabled()) return ncclSuccess;
+  if (comm == NULL) return ncclInvalidArgument;
+  if (comm->nRanks <= 0 || comm->nRanks > NCCL_MERGE_AUTO_MAX_RANKS) return ncclSuccess;
+
+  struct ncclMergeAutoNodeMap localNodeMap;
+  struct ncclMergeAutoNodeMap* map = nodeMap != NULL ? nodeMap : &localNodeMap;
+  NCCLCHECK(ncclMergeAutoBuildNodeMapFromComm(comm, map));
+  *isTwoNode = (map->valid && map->numNodes == 2) ? 1 : 0;
+  return ncclSuccess;
 }
 
 static bool ncclMergeAutoIsIbNet(struct ncclComm* comm) {
