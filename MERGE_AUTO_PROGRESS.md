@@ -8,7 +8,7 @@ resume without relying on chat context.
 
 Latest feature commit before this snapshot:
 
-- `f906595 Dump merge auto default graph cross edges`
+- `b2c3b59 Resolve merge auto dump edge rails`
 
 Implemented commits:
 
@@ -66,6 +66,14 @@ Implemented commits:
   - Does not resolve netDev/HCA yet.
   - Does not build alternate candidates yet.
 
+- `b2c3b59 Resolve merge auto dump edge rails`
+  - Uses `ncclTopoGetNetDev(...)` as a dry-run resolver for dumped edges.
+  - Reads `comm->ncclNet->getProperties(netDev).vProps`.
+  - Adds physical rail ids to dump lines.
+  - Uses unit bandwidth for physical rails.
+  - Falls back to `net=unknown` if the dry-run resolver cannot map an edge.
+  - Does not call transport listen/connect/accept.
+
 ## Verification So Far
 
 - `git diff --check` passed for each committed step.
@@ -89,11 +97,14 @@ Implemented commits:
 
 ## Next Work Items
 
-1. netDev / physical rail resolve
-   - Prefer graph/topology metadata.
-   - Likely starting point: `ncclTopoGetNetDev(...)` in `src/graph/search.cc`.
-   - Avoid calling transport listen/connect/accept.
-   - Use physical rails from vNIC metadata where available; otherwise unit fallback.
+1. Postset/global ring plan extraction
+   - Important: `ncclTopoGraph::intra/inter` is a graph-search plan, not necessarily the final global ring after `ncclTopoPostset`.
+   - Before real metrics/selection, extract the actual ring cross-node edges from postset inputs or outputs:
+     - `allTopoRanks[*]->ringRecv`
+     - `allTopoRanks[*]->ringSend`
+     - `comm->rankToNode`
+     - or `comm->channels[c].ring.prev/next` after postset
+   - Keep this as a dump-only commit first.
 
 2. Candidate dry-run
    - Build/import superset topology.
@@ -117,10 +128,10 @@ Implemented commits:
 
 ## Suggested Next Commit
 
-Implement netDev/physical rail resolve for dumped default-graph edges:
+Implement postset/global ring cross-edge dump:
 
-- Find where graph search records or can recompute the selected NET device for a rank edge.
-- Add a resolver that does not call transport listen/connect/accept.
-- Fill `edge.netDev`, `edge.nPhysRails`, and rail bandwidth fields where possible.
-- Extend dump lines with `net=IB/x phys={...} bw=...`.
+- Add a helper that derives two-node cross edges from postset ring endpoints.
+- Use `ringSend[node] -> ringRecv[nextNode]` for each channel.
+- Dump final ring-level edges after `ncclTopoPostset`.
+- Compare this dump with the earlier default graph dump.
 - Do not build alternate candidates yet.
