@@ -171,30 +171,18 @@ fail:
   return ncclInternalError;
 }
 
-static void ncclIbCanonicalizeVProps(ncclNetVDeviceProps_t* dst, const ncclNetVDeviceProps_t* src) {
-  *dst = *src;
-  for (int i = 1; i < dst->ndevs; i++) {
-    int dev = dst->devs[i];
+ncclResult_t ncclIbFindOrMakeVDeviceInternal(int* d, const ncclNetVDeviceProps_t* props, bool allowMultiDevice) {
+  ncclNetVDeviceProps_t vProps = *props;
+  // Canonicalize device order so repeated makeVDevice calls reuse the same vNIC.
+  for (int i = 1; i < vProps.ndevs; i++) {
+    int dev = vProps.devs[i];
     int j = i - 1;
-    while (j >= 0 && dst->devs[j] > dev) {
-      dst->devs[j+1] = dst->devs[j];
+    while (j >= 0 && vProps.devs[j] > dev) {
+      vProps.devs[j+1] = vProps.devs[j];
       j--;
     }
-    dst->devs[j+1] = dev;
+    vProps.devs[j+1] = dev;
   }
-}
-
-static bool ncclIbSameVProps(const ncclNetVDeviceProps_t* a, const ncclNetVDeviceProps_t* b) {
-  if (a->ndevs != b->ndevs) return false;
-  for (int i = 0; i < a->ndevs; i++) {
-    if (a->devs[i] != b->devs[i]) return false;
-  }
-  return true;
-}
-
-ncclResult_t ncclIbFindOrMakeVDeviceInternal(int* d, const ncclNetVDeviceProps_t* props, bool allowMultiDevice) {
-  ncclNetVDeviceProps_t vProps;
-  ncclIbCanonicalizeVProps(&vProps, props);
 
   if (vProps.ndevs > NCCL_IB_MAX_DEVS_PER_NIC) {
     WARN("NET/IB : Can't make virtual NIC with %d devices, max %d", vProps.ndevs, NCCL_IB_MAX_DEVS_PER_NIC);
@@ -219,7 +207,11 @@ ncclResult_t ncclIbFindOrMakeVDeviceInternal(int* d, const ncclNetVDeviceProps_t
   }
 
   for (int i = 0; i < ncclNMergedIbDevs; i++) {
-    if (ncclIbSameVProps(&ncclIbMergedDevs[i].vProps, &vProps)) {
+    bool sameVProps = ncclIbMergedDevs[i].vProps.ndevs == vProps.ndevs;
+    for (int j = 0; sameVProps && j < vProps.ndevs; j++) {
+      sameVProps = ncclIbMergedDevs[i].vProps.devs[j] == vProps.devs[j];
+    }
+    if (sameVProps) {
       *d = i;
       TRACE(NCCL_NET, "NET/IB : Reusing virtual device [%d] name=%s ndevs=%d", *d, ncclIbMergedDevs[i].devName, vProps.ndevs);
       return ncclSuccess;
