@@ -8,7 +8,7 @@ resume without relying on chat context.
 
 Latest feature commit before this snapshot:
 
-- `b2c3b59 Resolve merge auto dump edge rails`
+- `022fcac Dump merge auto postset ring edges`
 
 Implemented commits:
 
@@ -74,6 +74,14 @@ Implemented commits:
   - Falls back to `net=unknown` if the dry-run resolver cannot map an edge.
   - Does not call transport listen/connect/accept.
 
+- `022fcac Dump merge auto postset ring edges`
+  - Dumps cross-node edges derived from postset ring endpoints.
+  - Uses `ringSend[node] -> ringRecv[nextNode]`.
+  - Runs after `ncclTopoPostset(...)`, so odd-node endpoint swaps have already been applied.
+  - Only the first rank of each node emits its node direction to avoid per-rank duplicate dumps.
+  - Reuses the dry-run netDev/physical rail resolver.
+  - Does not change postset, channel selection, or transport setup.
+
 ## Verification So Far
 
 - `git diff --check` passed for each committed step.
@@ -97,14 +105,12 @@ Implemented commits:
 
 ## Next Work Items
 
-1. Postset/global ring plan extraction
-   - Important: `ncclTopoGraph::intra/inter` is a graph-search plan, not necessarily the final global ring after `ncclTopoPostset`.
-   - Before real metrics/selection, extract the actual ring cross-node edges from postset inputs or outputs:
-     - `allTopoRanks[*]->ringRecv`
-     - `allTopoRanks[*]->ringSend`
-     - `comm->rankToNode`
-     - or `comm->channels[c].ring.prev/next` after postset
-   - Keep this as a dump-only commit first.
+1. Postset edge metrics / aggregation strategy
+   - Current postset dump resolves each node direction on that node's first rank.
+   - Real metrics need a deterministic way for all ranks to see both directions:
+     - gather per-node resolved edge rail sets, or
+     - expose enough graph/net metadata to resolve remote node edges consistently.
+   - Keep the next step as default-candidate metrics before building alternate candidates.
 
 2. Candidate dry-run
    - Build/import superset topology.
@@ -128,10 +134,9 @@ Implemented commits:
 
 ## Suggested Next Commit
 
-Implement postset/global ring cross-edge dump:
+Implement default-candidate postset metrics:
 
-- Add a helper that derives two-node cross edges from postset ring endpoints.
-- Use `ringSend[node] -> ringRecv[nextNode]` for each channel.
-- Dump final ring-level edges after `ncclTopoPostset`.
-- Compare this dump with the earlier default graph dump.
+- Aggregate the resolved postset edge rails for the default candidate.
+- Keep it dump/summary-only.
 - Do not build alternate candidates yet.
+- Do not change selection behavior.
