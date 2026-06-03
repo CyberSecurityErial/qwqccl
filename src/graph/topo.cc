@@ -1595,7 +1595,7 @@ ncclResult_t ncclTopoGetFusionEnv(int* mergeLevel, const char** forceMerge) {
 
 static std::mutex netMutex;
 
-ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** system, const char* dumpXmlFile) {
+ncclResult_t ncclTopoGetSystemWithMergeView(struct ncclComm* comm, struct ncclTopoSystem** system, const char* dumpXmlFile, enum ncclNetMergeView mergeView) {
   ncclResult_t ret = ncclSuccess;
   struct ncclXml* xml;
   char* mem = NULL;
@@ -1690,7 +1690,7 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
       netInfo.makeVDevice = comm->ncclNet->makeVDevice;
       netInfo.devices = comm->ncclNet->devices;
       NCCLCHECK(ncclTopoGetFusionEnv(&netInfo.mergeLevel, &netInfo.forceMerge));
-      NCCLCHECKGOTO(ncclTopoProcessNet(xml, dumpXmlFile, &netInfo), ret, fail);
+      NCCLCHECKGOTO(ncclTopoProcessNetWithMergeView(xml, dumpXmlFile, &netInfo, mergeView), ret, fail);
   }
 
   // Remove XML branches which don't have a node with keep="1" (typically when importing a topology)
@@ -1750,6 +1750,10 @@ exit:
   return ret;
 fail:
   goto exit;
+}
+
+ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** system, const char* dumpXmlFile) {
+  return ncclTopoGetSystemWithMergeView(comm, system, dumpXmlFile, NCCL_NET_MERGE_VIEW_MERGED_DEFAULT);
 }
 
 ncclResult_t ncclTopoGetLocal(struct ncclTopoSystem* system, int type, int index, int resultType,

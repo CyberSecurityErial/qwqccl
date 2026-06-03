@@ -196,6 +196,7 @@ ncclResult_t ncclTopoProcessNet(ncclXml* xml, const char* dumpXmlFile, struct nc
 ncclResult_t ncclTopoProcessNetWithMergeView(ncclXml* xml, const char* dumpXmlFile, struct ncclTopoNetInfo* net, enum ncclNetMergeView mergeView);
 ncclResult_t ncclTopoCopyXmlForNetMergeView(struct ncclXml* dst, struct ncclXml* src, enum ncclNetMergeView mergeView);
 ncclResult_t ncclTopoGetFusionEnv(int* mergeLevel, const char** forceMerge);
+ncclResult_t ncclTopoGetSystemWithMergeView(struct ncclComm* comm, struct ncclTopoSystem** system, const char* dumpXmlFile, enum ncclNetMergeView mergeView);
 
 #define NCCL_TOPO_XML_MAX_NODES 256
 #define NCCL_GRAPH_XML_MAX_NODES 65536
