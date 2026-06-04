@@ -937,6 +937,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   int rank = comm->rank;
   int nranks = comm->nRanks;
   int nNodes = 1;
+  int nChannelsPostsetInput = 0;
   ncclAffinity affinitySave = {};
   struct ncclTopoGraph* ringGraph = &comm->graphs[NCCL_ALGO_RING];
   struct ncclTopoGraph* treeGraph = &comm->graphs[NCCL_ALGO_TREE];
@@ -1454,7 +1455,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   comm->isOneRPN = (comm->maxLocalRanks == 1);
 
   NCCLCHECKGOTO(ncclCalloc(&rings, nranks*MAXCHANNELS), ret, fail);
-  int nChannelsPostsetInput = comm->nChannels;
+  nChannelsPostsetInput = comm->nChannels;
   NCCLCHECKGOTO(ncclTopoPostset(comm, nodesFirstRank, nodesTreePatterns, allTopoRanks, rings, graphs, parent), ret, fail);
   if (mergeAutoTwoNode) {
     NCCLCHECKGOTO(ncclMergeAutoDumpPostsetRingEdges("default-postset", comm, ringGraph, allTopoRanks, nodesFirstRank, nChannelsPostsetInput), ret, fail);

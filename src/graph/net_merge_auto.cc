@@ -11,6 +11,7 @@
 #include "graph.h"
 #include "param.h"
 #include "topo.h"
+#include "transport.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
