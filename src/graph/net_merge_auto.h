@@ -85,7 +85,6 @@ struct ncclMergeAutoTopoCandidate {
   enum ncclNetMergeView mergeView;
   struct ncclTopoSystem* system;
   struct ncclTopoGraph ringGraph;
-  struct ncclMergeAutoMetrics metrics;
   int valid;
 };
 
@@ -105,11 +104,6 @@ ncclResult_t ncclMergeAutoExtractGraphChannelRings(
     struct ncclMergeAutoChannelSet* out);
 ncclResult_t ncclMergeAutoDumpGraphChannelRings(const char* label, struct ncclTopoSystem* system, const struct ncclTopoGraph* graph);
 ncclResult_t ncclMergeAutoResolveNetDevForEdge(struct ncclComm* comm, const struct ncclTopoGraph* graph, struct ncclMergeAutoCrossEdge* edge);
-ncclResult_t ncclMergeAutoResolveNetDevForEdgeOnSystem(
-    struct ncclComm* comm,
-    struct ncclTopoSystem* system,
-    const struct ncclTopoGraph* graph,
-    struct ncclMergeAutoCrossEdge* edge);
 ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
     const char* label,
     struct ncclComm* comm,
@@ -150,10 +144,6 @@ int ncclMergeAutoPickMergeMode(const struct ncclMergeAutoMetrics* merge0, const 
 ncclResult_t ncclMergeAutoBuildChannelCandidates(
     struct ncclComm* comm,
     const struct ncclTopoGraph* ringGraphTemplate,
-    struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT]);
-ncclResult_t ncclMergeAutoEvaluateChannelCandidates(
-    struct ncclComm* comm,
-    const struct ncclMergeAutoRankToNodeMap* rankToNodeMap,
     struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT]);
 void ncclMergeAutoFreeChannelCandidates(struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT]);
 

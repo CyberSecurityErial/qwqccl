@@ -142,7 +142,6 @@ void ncclMergeAutoFreeChannelCandidates(struct ncclMergeAutoTopoCandidate candid
       candidates[c].system = NULL;
     }
     memset(&candidates[c].ringGraph, 0, sizeof(candidates[c].ringGraph));
-    memset(&candidates[c].metrics, 0, sizeof(candidates[c].metrics));
     candidates[c].valid = 0;
   }
 }
@@ -162,6 +161,8 @@ static ncclResult_t ncclMergeAutoComputeOneChannelCandidate(
   ret = ncclTopoSearchInit(candidate->system);
   if (ret != ncclSuccess) return ret;
 
+  // ringGraphTemplate is only the clean search config; ncclTopoCompute fills
+  // this candidate's channel result.
   candidate->ringGraph = *ringGraphTemplate;
   ret = ncclTopoCompute(candidate->system, &candidate->ringGraph);
   if (ret != ncclSuccess) return ret;
@@ -306,28 +307,16 @@ ncclResult_t ncclMergeAutoDumpGraphChannelRings(const char* label, struct ncclTo
   return ret;
 }
 
-static int ncclMergeAutoMergeModeFromView(enum ncclNetMergeView mergeView) {
-  return mergeView == NCCL_NET_MERGE_VIEW_UNMERGED ? NCCL_IB_MERGE_NICS_MODE_UNMERGED : NCCL_IB_MERGE_NICS_MODE_MERGED;
-}
-
-ncclResult_t ncclMergeAutoResolveNetDevForEdgeOnSystem(
-    struct ncclComm* comm,
-    struct ncclTopoSystem* system,
-    const struct ncclTopoGraph* graph,
-    struct ncclMergeAutoCrossEdge* edge) {
-  if (comm == NULL || system == NULL || graph == NULL || edge == NULL) return ncclInvalidArgument;
+ncclResult_t ncclMergeAutoResolveNetDevForEdge(struct ncclComm* comm, const struct ncclTopoGraph* graph, struct ncclMergeAutoCrossEdge* edge) {
+  if (comm == NULL || graph == NULL || edge == NULL) return ncclInvalidArgument;
   edge->netDev = -1;
   edge->netBw = 1.0;
   edge->nPhysRails = 0;
-  if (graph->pattern != NCCL_TOPO_PATTERN_RING || graph->nChannels <= 0) return ncclInvalidArgument;
 
-  int channel = edge->channelId % graph->nChannels;
-  int ngpus = system->nodes[GPU].count;
-  if (ngpus <= 0 || ngpus > NCCL_MERGE_AUTO_MAX_RANKS) return ncclInvalidArgument;
-  int index = graph->intra[channel*ngpus] == edge->srcRank ? 0 : 1;
-  int64_t netId = graph->inter[channel*2+index];
+  int proxyRank;
+  int64_t netId;
   int netDev = -1;
-  ncclResult_t ret = ncclTopoIdToNetDev(system, netId, &netDev);
+  ncclResult_t ret = ncclTopoGetNetDev(comm, edge->srcRank, (struct ncclTopoGraph*)graph, edge->channelId, edge->dstRank, &netId, &netDev, &proxyRank);
   if (ret != ncclSuccess || netDev < 0) return ncclSuccess;
   edge->netDev = netDev;
 
@@ -350,11 +339,6 @@ ncclResult_t ncclMergeAutoResolveNetDevForEdgeOnSystem(
     edge->physRailBw[r] = 1.0;
   }
   return ncclSuccess;
-}
-
-ncclResult_t ncclMergeAutoResolveNetDevForEdge(struct ncclComm* comm, const struct ncclTopoGraph* graph, struct ncclMergeAutoCrossEdge* edge) {
-  if (comm == NULL) return ncclInvalidArgument;
-  return ncclMergeAutoResolveNetDevForEdgeOnSystem(comm, comm->topo, graph, edge);
 }
 
 static void ncclMergeAutoFormatPhysRails(const struct ncclMergeAutoCrossEdge* edge, char* buffer, int bufferSize) {
@@ -384,7 +368,6 @@ static void ncclMergeAutoFormatPhysRails(const struct ncclMergeAutoCrossEdge* ed
 }
 
 static void ncclMergeAutoDumpResolvedEdge(const char* label, struct ncclComm* comm, const struct ncclMergeAutoCrossEdge* edge) {
-  if (!ncclIbMergeNicsAutoDumpEnabled()) return;
   char phys[256];
   ncclMergeAutoFormatPhysRails(edge, phys, sizeof(phys));
   const char* netName = (comm != NULL && comm->ncclNet != NULL && comm->ncclNet->name != NULL) ? comm->ncclNet->name : "unknown";
@@ -432,7 +415,7 @@ ncclResult_t ncclMergeAutoDumpGraphCrossEdges(
     for (int e = 0; e < nEdges; e++) {
       struct ncclMergeAutoCrossEdge* edge = edges + e;
       if (comm != NULL) {
-        ncclResult_t resolveRet = ncclMergeAutoResolveNetDevForEdgeOnSystem(comm, system, graph, edge);
+        ncclResult_t resolveRet = ncclMergeAutoResolveNetDevForEdge(comm, graph, edge);
         if (resolveRet != ncclSuccess) ret = resolveRet;
       }
       if (ret != ncclSuccess) break;
@@ -572,102 +555,6 @@ ncclResult_t ncclMergeAutoGetCrossNodeEdges(
       edge->netDev = -1;
       edge->netBw = 1.0;
     }
-  }
-  return ncclSuccess;
-}
-
-static void ncclMergeAutoLogCandidateMetrics(struct ncclComm* comm, const struct ncclMergeAutoTopoCandidate* candidate) {
-  if (comm == NULL || comm->rank != 0 || candidate == NULL) return;
-  const struct ncclMergeAutoMetrics* metrics = &candidate->metrics;
-  if (!metrics->valid) {
-    INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: candidate=%s metrics valid=0", candidate->name);
-    return;
-  }
-  INFO(NCCL_GRAPH|NCCL_NET,
-    "MergeAuto: candidate=%s metrics valid=1 channels=%d crossEdges=%d rails01=%d rails10=%d dirBw01=%.2f dirBw10=%.2f bidirBw=%.2f balance=%.2f score=%.2f",
-    candidate->name, candidate->ringGraph.nChannels, metrics->nEdges,
-    metrics->uniqueRails01, metrics->uniqueRails10, metrics->dirBw01, metrics->dirBw10,
-    metrics->bidirBw, metrics->balance, metrics->score);
-}
-
-static ncclResult_t ncclMergeAutoEvaluateOneChannelCandidate(
-    struct ncclComm* comm,
-    const struct ncclMergeAutoRankToNodeMap* rankToNodeMap,
-    struct ncclMergeAutoTopoCandidate* candidate) {
-  if (comm == NULL || rankToNodeMap == NULL || candidate == NULL) return ncclInvalidArgument;
-  memset(&candidate->metrics, 0, sizeof(candidate->metrics));
-  candidate->metrics.merge = ncclMergeAutoMergeModeFromView(candidate->mergeView);
-
-  if (!candidate->valid || candidate->system == NULL || candidate->ringGraph.nChannels == 0) {
-    ncclMergeAutoLogCandidateMetrics(comm, candidate);
-    return ncclSuccess;
-  }
-
-  int ngpus = candidate->system->nodes[GPU].count;
-  if (ngpus <= 0 || ngpus > NCCL_MERGE_AUTO_MAX_RANKS) {
-    ncclMergeAutoLogCandidateMetrics(comm, candidate);
-    return ncclSuccess;
-  }
-
-  struct ncclMergeAutoChannelRing* rings = (struct ncclMergeAutoChannelRing*)malloc(sizeof(*rings) * candidate->ringGraph.nChannels);
-  int* rankStorage = (int*)malloc(sizeof(*rankStorage) * candidate->ringGraph.nChannels * ngpus);
-  struct ncclMergeAutoCrossEdge* edges = (struct ncclMergeAutoCrossEdge*)malloc(sizeof(*edges) * candidate->ringGraph.nChannels * ngpus);
-  if (rings == NULL || rankStorage == NULL || edges == NULL) {
-    free(rings);
-    free(rankStorage);
-    free(edges);
-    ncclMergeAutoLogCandidateMetrics(comm, candidate);
-    return ncclSuccess;
-  }
-
-  struct ncclMergeAutoChannelSet channels;
-  ncclResult_t ret = ncclMergeAutoExtractGraphChannelRings(
-      candidate->system, &candidate->ringGraph, rings, rankStorage,
-      candidate->ringGraph.nChannels, ngpus, &channels);
-
-  int nEdges = 0;
-  if (ret == ncclSuccess) {
-    ret = ncclMergeAutoGetCrossNodeEdges(&channels, rankToNodeMap, edges, candidate->ringGraph.nChannels * ngpus, &nEdges);
-  }
-  if (ret == ncclSuccess) {
-    for (int e = 0; e < nEdges; e++) {
-      ret = ncclMergeAutoResolveNetDevForEdgeOnSystem(comm, candidate->system, &candidate->ringGraph, edges + e);
-      if (ret != ncclSuccess) break;
-      ncclMergeAutoDumpResolvedEdge(candidate->name, comm, edges + e);
-    }
-  }
-  if (ret == ncclSuccess) {
-    ret = ncclMergeAutoEvaluateCandidate(candidate->metrics.merge, &channels, edges, nEdges, &candidate->metrics);
-  }
-
-  if (ret != ncclSuccess) {
-    memset(&candidate->metrics, 0, sizeof(candidate->metrics));
-    candidate->metrics.merge = ncclMergeAutoMergeModeFromView(candidate->mergeView);
-    if (comm->rank == 0) {
-      INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: candidate=%s metrics valid=0 reason=evaluate_failed ret=%d",
-        candidate->name, ret);
-    }
-  } else {
-    ncclMergeAutoLogCandidateMetrics(comm, candidate);
-  }
-
-  free(rings);
-  free(rankStorage);
-  free(edges);
-  return ncclSuccess;
-}
-
-ncclResult_t ncclMergeAutoEvaluateChannelCandidates(
-    struct ncclComm* comm,
-    const struct ncclMergeAutoRankToNodeMap* rankToNodeMap,
-    struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT]) {
-  if (comm == NULL || rankToNodeMap == NULL || candidates == NULL) return ncclInvalidArgument;
-  if (!rankToNodeMap->valid || rankToNodeMap->numNodes != 2) return ncclInvalidArgument;
-  if (!ncclIbMergeNicsAutoEnabled()) return ncclSuccess;
-  if (!ncclMergeAutoIsIbNet(comm)) return ncclSuccess;
-
-  for (int c = 0; c < NCCL_MERGE_AUTO_TOPO_COUNT; c++) {
-    NCCLCHECK(ncclMergeAutoEvaluateOneChannelCandidate(comm, rankToNodeMap, candidates + c));
   }
   return ncclSuccess;
 }
