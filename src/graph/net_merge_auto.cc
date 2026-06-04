@@ -135,6 +135,22 @@ static void ncclMergeAutoInitChannelCandidates(struct ncclMergeAutoTopoCandidate
   candidates[NCCL_MERGE_AUTO_TOPO_MERGED].mergeView = NCCL_NET_MERGE_VIEW_MERGED_DEFAULT;
 }
 
+static ncclResult_t ncclMergeAutoInitCandidateRingGraph(
+    const struct ncclTopoGraph* ringGraphTemplate,
+    struct ncclTopoGraph* ringGraph) {
+  if (ringGraphTemplate == NULL || ringGraph == NULL) return ncclInvalidArgument;
+  if (ringGraphTemplate->pattern != NCCL_TOPO_PATTERN_RING || ringGraphTemplate->nChannels != 0) return ncclInvalidArgument;
+
+  memset(ringGraph, 0, sizeof(*ringGraph));
+  ringGraph->id = ringGraphTemplate->id;
+  ringGraph->pattern = ringGraphTemplate->pattern;
+  ringGraph->crossNic = ringGraphTemplate->crossNic;
+  ringGraph->collNet = ringGraphTemplate->collNet;
+  ringGraph->minChannels = ringGraphTemplate->minChannels;
+  ringGraph->maxChannels = ringGraphTemplate->maxChannels;
+  return ncclSuccess;
+}
+
 void ncclMergeAutoFreeChannelCandidates(struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT]) {
   if (candidates == NULL) return;
   for (int c = 0; c < NCCL_MERGE_AUTO_TOPO_COUNT; c++) {
@@ -162,9 +178,9 @@ static ncclResult_t ncclMergeAutoComputeOneChannelCandidate(
   ret = ncclTopoSearchInit(candidate->system);
   if (ret != ncclSuccess) return ret;
 
-  // ringGraphTemplate is only the clean search config; ncclTopoCompute fills
-  // this candidate's channel result.
-  candidate->ringGraph = *ringGraphTemplate;
+  // Build from scalar search constraints only. Candidate graph output must not
+  // reuse or depend on the live graph that the formal NCCL path will compute.
+  NCCLCHECK(ncclMergeAutoInitCandidateRingGraph(ringGraphTemplate, &candidate->ringGraph));
   ret = ncclTopoCompute(candidate->system, &candidate->ringGraph);
   if (ret != ncclSuccess) return ret;
   candidate->valid = 1;
@@ -532,7 +548,8 @@ ncclResult_t ncclMergeAutoGetCrossNodeEdges(
   *nEdges = 0;
   for (int c = 0; c < channels->nChannels; c++) {
     const struct ncclMergeAutoChannelRing* ring = channels->rings + c;
-    if (ring->nRanks < 2 || ring->ranks == NULL) return ncclInvalidArgument;
+    if (ring->nRanks < 0 || (ring->nRanks > 0 && ring->ranks == NULL)) return ncclInvalidArgument;
+    if (ring->nRanks < 2) continue;
 
     for (int i = 0; i < ring->nRanks; i++) {
       int src = ring->ranks[i];

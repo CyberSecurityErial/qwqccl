@@ -1147,15 +1147,24 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   ringGraph->minChannels = 1;
   ringGraph->maxChannels = MAXCHANNELS/2;
   if (mergeAutoTwoNode) {
-    struct ncclMergeAutoTopoCandidate mergeAutoCandidates[NCCL_MERGE_AUTO_TOPO_COUNT];
-    memset(mergeAutoCandidates, 0, sizeof(mergeAutoCandidates));
-    ret = ncclMergeAutoBuildChannelCandidates(comm, ringGraph, mergeAutoCandidates);
-    if (ret != ncclSuccess) {
+    if (nranks <= 2) {
+      if (rank == 0) INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: skipped reason=nranks_le_2 nranks=%d", nranks);
+    } else {
+      struct ncclMergeAutoTopoCandidate mergeAutoCandidates[NCCL_MERGE_AUTO_TOPO_COUNT];
+      memset(mergeAutoCandidates, 0, sizeof(mergeAutoCandidates));
+      ret = ncclMergeAutoBuildChannelCandidates(comm, ringGraph, mergeAutoCandidates);
+      if (ret != ncclSuccess) {
+        ncclMergeAutoFreeChannelCandidates(mergeAutoCandidates);
+        goto fail;
+      }
+      // Dry-run only. Future metric evaluation must consume candidates before freeing them.
       ncclMergeAutoFreeChannelCandidates(mergeAutoCandidates);
+    }
+    if (ringGraph->nChannels != 0) {
+      WARN("MergeAuto dry-run modified the formal ring graph template.");
+      ret = ncclInternalError;
       goto fail;
     }
-    // Dry-run only. Future metric evaluation must consume candidates before freeing them.
-    ncclMergeAutoFreeChannelCandidates(mergeAutoCandidates);
   }
   NCCLCHECKGOTO(ncclTopoCompute(comm->topo, ringGraph), ret, fail);
   NCCLCHECKGOTO(ncclTopoPrintGraph(comm->topo, ringGraph), ret, fail);
