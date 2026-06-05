@@ -88,11 +88,29 @@ struct ncclMergeAutoTopoCandidate {
   int valid;
 };
 
+struct ncclMergeAutoCandidateSummary {
+  int valid;
+  int nChannels;
+};
+
+struct ncclMergeAutoCandidateGlobalMetric {
+  int globalValid;
+  int globalMinChannels;
+  int globalMaxChannels;
+  int globalChannelMismatch;
+};
+
+struct ncclMergeAutoSelection {
+  enum ncclNetMergeView selectedView;
+  const char* reason;
+};
+
 int ncclIbMergeNicsMode();
 bool ncclIbMergeNicsAutoEnabled();
 int ncclIbMergeNicsAutoThresholdPct();
 bool ncclIbMergeNicsAutoDumpEnabled();
 ncclResult_t ncclIbMergeNicsAutoLogEnv();
+const char* ncclMergeAutoViewName(enum ncclNetMergeView mergeView);
 ncclResult_t ncclMergeAutoCheckTwoNode(struct ncclComm* comm, struct ncclMergeAutoRankToNodeMap* rankToNodeMap, int* isTwoNode);
 ncclResult_t ncclMergeAutoExtractGraphChannelRings(
     struct ncclTopoSystem* system,
@@ -145,6 +163,11 @@ ncclResult_t ncclMergeAutoBuildChannelCandidates(
     struct ncclComm* comm,
     const struct ncclTopoGraph* ringGraphTemplate,
     struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT]);
+ncclResult_t ncclMergeAutoSelectView(
+    struct ncclComm* comm,
+    const struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT],
+    struct ncclMergeAutoCandidateGlobalMetric metrics[NCCL_MERGE_AUTO_TOPO_COUNT],
+    struct ncclMergeAutoSelection* selection);
 void ncclMergeAutoFreeChannelCandidates(struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT]);
 
 #endif

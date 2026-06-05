@@ -7,11 +7,13 @@
 
 #include "net_merge_auto.h"
 #include "comm.h"
+#include "bootstrap.h"
 #include "debug.h"
 #include "graph.h"
 #include "param.h"
 #include "topo.h"
 #include "transport.h"
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -118,7 +120,7 @@ ncclResult_t ncclMergeAutoCheckRuntime(
   return ncclSuccess;
 }
 
-static const char* ncclMergeAutoMergeViewName(enum ncclNetMergeView mergeView) {
+const char* ncclMergeAutoViewName(enum ncclNetMergeView mergeView) {
   switch (mergeView) {
   case NCCL_NET_MERGE_VIEW_UNMERGED: return "UNMERGED";
   case NCCL_NET_MERGE_VIEW_MERGED_DEFAULT: return "MERGED_DEFAULT";
@@ -209,7 +211,7 @@ ncclResult_t ncclMergeAutoBuildChannelCandidates(
     struct ncclMergeAutoTopoCandidate* candidate = candidates + c;
     if (comm->rank == 0) {
       INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: build candidate=%s view=%s",
-        candidate->name, ncclMergeAutoMergeViewName(candidate->mergeView));
+        candidate->name, ncclMergeAutoViewName(candidate->mergeView));
     }
 
     ncclResult_t ret = ncclTopoGetSystemWithMergeView(comm, &candidate->system, NULL, candidate->mergeView);
@@ -229,6 +231,122 @@ ncclResult_t ncclMergeAutoBuildChannelCandidates(
       candidate->valid = 0;
     }
   }
+  return ncclSuccess;
+}
+
+static void ncclMergeAutoFillCandidateSummary(
+    const struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT],
+    struct ncclMergeAutoCandidateSummary summaries[NCCL_MERGE_AUTO_TOPO_COUNT]) {
+  memset(summaries, 0, sizeof(*summaries) * NCCL_MERGE_AUTO_TOPO_COUNT);
+  for (int c = 0; c < NCCL_MERGE_AUTO_TOPO_COUNT; c++) {
+    summaries[c].valid = candidates[c].valid ? 1 : 0;
+    summaries[c].nChannels = candidates[c].valid ? candidates[c].ringGraph.nChannels : 0;
+  }
+}
+
+static void ncclMergeAutoComputeGlobalMetrics(
+    int nranks,
+    const struct ncclMergeAutoCandidateSummary* allSummaries,
+    struct ncclMergeAutoCandidateGlobalMetric metrics[NCCL_MERGE_AUTO_TOPO_COUNT]) {
+  memset(metrics, 0, sizeof(*metrics) * NCCL_MERGE_AUTO_TOPO_COUNT);
+  for (int c = 0; c < NCCL_MERGE_AUTO_TOPO_COUNT; c++) {
+    int globalValid = 1;
+    int minChannels = INT_MAX;
+    int maxChannels = 0;
+    for (int r = 0; r < nranks; r++) {
+      const struct ncclMergeAutoCandidateSummary* summary = allSummaries + r * NCCL_MERGE_AUTO_TOPO_COUNT + c;
+      if (!summary->valid) globalValid = 0;
+      if (summary->nChannels < minChannels) minChannels = summary->nChannels;
+      if (summary->nChannels > maxChannels) maxChannels = summary->nChannels;
+    }
+    if (minChannels == INT_MAX) minChannels = 0;
+    metrics[c].globalValid = globalValid;
+    metrics[c].globalMinChannels = minChannels;
+    metrics[c].globalMaxChannels = maxChannels;
+    metrics[c].globalChannelMismatch = minChannels != maxChannels ? 1 : 0;
+  }
+}
+
+static void ncclMergeAutoPickSelectedView(
+    const struct ncclMergeAutoCandidateGlobalMetric metrics[NCCL_MERGE_AUTO_TOPO_COUNT],
+    struct ncclMergeAutoSelection* selection) {
+  const struct ncclMergeAutoCandidateGlobalMetric* unmerged = metrics + NCCL_MERGE_AUTO_TOPO_UNMERGED;
+  const struct ncclMergeAutoCandidateGlobalMetric* merged = metrics + NCCL_MERGE_AUTO_TOPO_MERGED;
+
+  // TODO(MergeAuto metric tuning):
+  // This is intentionally the simplest first-version metric.
+  // Current selection only compares globalMinChannels.
+  // Future versions may add:
+  //   1. bwInter / bwIntra based score
+  //   2. merge penalty for MERGED_DEFAULT
+  //   3. mismatch penalty when minChannels != maxChannels
+  //   4. rail coverage / HCA usage balance
+  //   5. GPU-HCA affinity cost
+  //   6. runtime benchmark feedback
+  //   7. channel-level or edge-level mixed merge selection
+  //
+  // Do not add these in the first version.
+  // Keep the first implementation deterministic and easy to validate.
+  if (unmerged->globalValid && !merged->globalValid) {
+    selection->selectedView = NCCL_NET_MERGE_VIEW_UNMERGED;
+    selection->reason = "only_unmerged_valid";
+  } else if (!unmerged->globalValid && merged->globalValid) {
+    selection->selectedView = NCCL_NET_MERGE_VIEW_MERGED_DEFAULT;
+    selection->reason = "only_merged_valid";
+  } else if (!unmerged->globalValid && !merged->globalValid) {
+    selection->selectedView = NCCL_NET_MERGE_VIEW_MERGED_DEFAULT;
+    selection->reason = "both_invalid_fallback_default";
+  } else if (unmerged->globalMinChannels >= merged->globalMinChannels) {
+    selection->selectedView = NCCL_NET_MERGE_VIEW_UNMERGED;
+    selection->reason = "unmerged_min_channels_ge_merged";
+  } else {
+    selection->selectedView = NCCL_NET_MERGE_VIEW_MERGED_DEFAULT;
+    selection->reason = "merged_min_channels_gt_unmerged";
+  }
+}
+
+ncclResult_t ncclMergeAutoSelectView(
+    struct ncclComm* comm,
+    const struct ncclMergeAutoTopoCandidate candidates[NCCL_MERGE_AUTO_TOPO_COUNT],
+    struct ncclMergeAutoCandidateGlobalMetric metrics[NCCL_MERGE_AUTO_TOPO_COUNT],
+    struct ncclMergeAutoSelection* selection) {
+  if (comm == NULL || candidates == NULL || metrics == NULL || selection == NULL) return ncclInvalidArgument;
+  if (comm->nRanks <= 0 || comm->nRanks > NCCL_MERGE_AUTO_MAX_RANKS) return ncclInvalidArgument;
+
+  memset(selection, 0, sizeof(*selection));
+  struct ncclMergeAutoCandidateSummary* allSummaries = (struct ncclMergeAutoCandidateSummary*)malloc(
+      sizeof(*allSummaries) * comm->nRanks * NCCL_MERGE_AUTO_TOPO_COUNT);
+  if (allSummaries == NULL) return ncclSystemError;
+  memset(allSummaries, 0, sizeof(*allSummaries) * comm->nRanks * NCCL_MERGE_AUTO_TOPO_COUNT);
+  ncclMergeAutoFillCandidateSummary(candidates, allSummaries + comm->rank * NCCL_MERGE_AUTO_TOPO_COUNT);
+
+  ncclResult_t ret = bootstrapAllGather(comm->bootstrap, allSummaries, sizeof(*allSummaries) * NCCL_MERGE_AUTO_TOPO_COUNT);
+  if (ret != ncclSuccess) {
+    free(allSummaries);
+    return ret;
+  }
+
+  ncclMergeAutoComputeGlobalMetrics(comm->nRanks, allSummaries, metrics);
+  ncclMergeAutoPickSelectedView(metrics, selection);
+
+  if (comm->rank == 0) {
+    for (int c = 0; c < NCCL_MERGE_AUTO_TOPO_COUNT; c++) {
+      INFO(NCCL_GRAPH|NCCL_NET, "MergeAutoMetric: candidate=%s globalValid=%d minChannels=%d maxChannels=%d mismatch=%d",
+        ncclMergeAutoViewName(candidates[c].mergeView), metrics[c].globalValid,
+        metrics[c].globalMinChannels, metrics[c].globalMaxChannels, metrics[c].globalChannelMismatch);
+      if (metrics[c].globalChannelMismatch) {
+        INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: WARNING candidate=%s channel mismatch minChannels=%d maxChannels=%d",
+          ncclMergeAutoViewName(candidates[c].mergeView), metrics[c].globalMinChannels, metrics[c].globalMaxChannels);
+      }
+    }
+    if (!metrics[NCCL_MERGE_AUTO_TOPO_UNMERGED].globalValid && !metrics[NCCL_MERGE_AUTO_TOPO_MERGED].globalValid) {
+      INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: WARNING both candidates invalid, fallback view=MERGED_DEFAULT");
+    }
+    INFO(NCCL_GRAPH|NCCL_NET, "MergeAuto: selected view=%s reason=%s",
+      ncclMergeAutoViewName(selection->selectedView), selection->reason);
+  }
+
+  free(allSummaries);
   return ncclSuccess;
 }
 
