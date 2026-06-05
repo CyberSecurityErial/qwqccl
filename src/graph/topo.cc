@@ -8,6 +8,7 @@
 #include "core.h"
 #include "graph.h"
 #include "topo.h"
+#include "net_merge_auto.h"
 #include "comm.h"
 #include "nccl.h"
 #include "nvmlwrap.h"
@@ -1424,10 +1425,77 @@ out:
   return res;
 }
 
-static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIndex, struct ncclTopoNetInfo* netInfo, int virtualNics) {
+static ncclResult_t ncclTopoXmlHasNetKeepAttrs(struct ncclXml* xml, bool* hasKeepAttr) {
+  *hasKeepAttr = false;
+  struct ncclXmlNode* netNode = NULL;
+  NCCLCHECK(xmlFindTag(xml, "net", &netNode));
+  while (netNode) {
+    const char* keepAttr = NULL;
+    NCCLCHECK(xmlGetAttr(netNode, "keep", &keepAttr));
+    if (keepAttr) {
+      *hasKeepAttr = true;
+      return ncclSuccess;
+    }
+    NCCLCHECK(xmlFindNextTag(xml, "net", netNode, &netNode));
+  }
+  return ncclSuccess;
+}
+
+static ncclResult_t ncclTopoApplyNetMergeView(struct ncclXml* xml, enum ncclNetMergeView mergeView) {
+  struct ncclXmlNode* gpuNode = NULL;
+  NCCLCHECK(xmlFindTag(xml, "gpu", &gpuNode));
+  while (gpuNode) {
+    NCCLCHECK(xmlSetAttrInt(gpuNode, "keep", 1));
+    NCCLCHECK(xmlFindNextTag(xml, "gpu", gpuNode, &gpuNode));
+  }
+
+  bool hasNetKeepAttr = false;
+  NCCLCHECK(ncclTopoXmlHasNetKeepAttrs(xml, &hasNetKeepAttr));
+
+  struct ncclXmlNode* netNode = NULL;
+  NCCLCHECK(xmlFindTag(xml, "net", &netNode));
+  while (netNode) {
+    int isNet = 1;
+    int vNdevs = 0;
+    NCCLCHECK(xmlGetAttrIntDefault(netNode, "net", &isNet, 1));
+    NCCLCHECK(xmlGetAttrIntDefault(netNode, "vndevs", &vNdevs, 0));
+    if (isNet) {
+      if (mergeView == NCCL_NET_MERGE_VIEW_UNMERGED) {
+        NCCLCHECK(xmlSetAttrInt(netNode, "keep", vNdevs > 1 ? 0 : 1));
+      } else if (mergeView == NCCL_NET_MERGE_VIEW_SUPERSET || !hasNetKeepAttr) {
+        NCCLCHECK(xmlSetAttrInt(netNode, "keep", 1));
+      }
+    }
+    NCCLCHECK(xmlFindNextTag(xml, "net", netNode, &netNode));
+  }
+  return ncclSuccess;
+}
+
+ncclResult_t ncclTopoCopyXmlForNetMergeView(struct ncclXml* dst, struct ncclXml* src, enum ncclNetMergeView mergeView) {
+  if (dst == NULL || src == NULL || src->maxIndex == 0 || dst->maxIndex != 0) {
+    WARN("TOPO/NET : Invalid XML copy request for net merge view");
+    return ncclInvalidArgument;
+  }
+  if (dst->maxNodes < src->maxIndex) {
+    WARN("TOPO/NET : Destination XML has too few nodes for net merge view copy. %d < %d", dst->maxNodes, src->maxIndex);
+    return ncclInternalError;
+  }
+
+  NCCLCHECK(xmlAddTree(dst, NULL, src->nodes));
+  NCCLCHECK(ncclTopoApplyNetMergeView(dst, mergeView));
+  NCCLCHECK(ncclTopoTrimXml(dst));
+  return ncclSuccess;
+}
+
+static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIndex, struct ncclTopoNetInfo* netInfo, int virtualNics, enum ncclNetMergeView mergeView) {
   for (int n = startIndex; n < endIndex; n++) {
-    ncclNetProperties_t props;
+    ncclNetProperties_t props = {0};
     NCCLCHECK(netInfo->getProperties(n, &props));
+    // Unmerged view must not import merged virtual NICs.
+    if (mergeView == NCCL_NET_MERGE_VIEW_UNMERGED && props.vProps.ndevs > 1) {
+      INFO(NCCL_GRAPH|NCCL_NET, "TOPO/NET : Skipping %s device %d '%s' for NCCL_IB_MERGE_NICS=0", netInfo->name, n, props.name);
+      continue;
+    }
     struct ncclXmlNode* netNode = NULL;
     struct ncclXmlNode* parent = NULL;
     if (virtualNics) {
@@ -1448,6 +1516,7 @@ static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIn
     xmlGetAttrIntDefault(netNode, "dev", &dev, -1);
     if (dev != -1 && dev != n) INFO(NCCL_GRAPH, "TOPO/NET : Changing %s dev index from %d to %d", netInfo->name, dev, n);
     NCCLCHECK(xmlSetAttrInt(netNode, "dev", n));
+    NCCLCHECK(xmlSetAttrInt(netNode, "vndevs", props.vProps.ndevs));
     NCCLCHECK(xmlInitAttrInt(netNode, "latency", props.latency));
     NCCLCHECK(xmlInitAttrInt(netNode, "speed", props.speed));
     NCCLCHECK(xmlInitAttrInt(netNode, "port", props.port));
@@ -1479,12 +1548,15 @@ static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIn
 }
 
 // Calls to network plugin APIs should be protected. This function should be called inside a per-process lock.
-ncclResult_t ncclTopoProcessNet(ncclXml* xml, const char* dumpXmlFile, struct ncclTopoNetInfo* net) {
-  bool usePhysicalDevices = (dumpXmlFile || net->makeVDevice == NULL);
+ncclResult_t ncclTopoProcessNetWithMergeView(ncclXml* xml, const char* dumpXmlFile, struct ncclTopoNetInfo* net, enum ncclNetMergeView mergeView) {
+  if (net->net && net->name && strcmp(net->name, "IB") == 0 && ncclIbMergeNicsMode() == NCCL_IB_MERGE_NICS_MODE_UNMERGED) {
+    mergeView = NCCL_NET_MERGE_VIEW_UNMERGED;
+  }
+  bool usePhysicalDevices = (dumpXmlFile || net->makeVDevice == NULL || mergeView == NCCL_NET_MERGE_VIEW_UNMERGED);
   int nPhysicalNics, nVirtualNics;
   NCCLCHECK(net->getDevCount(net->netPluginIndex, &nPhysicalNics, &nVirtualNics));
   // List the physical devices in the topo
-  NCCLCHECK(ncclTopoPopulateNics(xml, 0, nPhysicalNics, net, /*virtual=*/false));
+  NCCLCHECK(ncclTopoPopulateNics(xml, 0, nPhysicalNics, net, /*virtual=*/false, mergeView));
   if (!usePhysicalDevices) {
     // Virtual devices are only created once per network
     if (nVirtualNics == NCCL_UNDEF_DEV_COUNT) {
@@ -1498,11 +1570,16 @@ ncclResult_t ncclTopoProcessNet(ncclXml* xml, const char* dumpXmlFile, struct nc
     }
     // populate the virtual devices if any
     if (nVirtualNics > 0) {
-      NCCLCHECK(ncclTopoPopulateNics(xml, nPhysicalNics, nPhysicalNics + nVirtualNics, net, /*virtual=*/true));
+      NCCLCHECK(ncclTopoPopulateNics(xml, nPhysicalNics, nPhysicalNics + nVirtualNics, net, /*virtual=*/true, mergeView));
     }
   }
+  if (mergeView == NCCL_NET_MERGE_VIEW_SUPERSET) NCCLCHECK(ncclTopoApplyNetMergeView(xml, mergeView));
 
   return ncclSuccess;
+}
+
+ncclResult_t ncclTopoProcessNet(ncclXml* xml, const char* dumpXmlFile, struct ncclTopoNetInfo* net) {
+  return ncclTopoProcessNetWithMergeView(xml, dumpXmlFile, net, NCCL_NET_MERGE_VIEW_MERGED_DEFAULT);
 }
 
 ncclResult_t ncclTopoGetFusionEnv(int* mergeLevel, const char** forceMerge) {
@@ -1518,7 +1595,7 @@ ncclResult_t ncclTopoGetFusionEnv(int* mergeLevel, const char** forceMerge) {
 
 static std::mutex netMutex;
 
-ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** system, const char* dumpXmlFile) {
+ncclResult_t ncclTopoGetSystemWithMergeView(struct ncclComm* comm, struct ncclTopoSystem** system, const char* dumpXmlFile, enum ncclNetMergeView mergeView) {
   ncclResult_t ret = ncclSuccess;
   struct ncclXml* xml;
   char* mem = NULL;
@@ -1568,6 +1645,7 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
   {
       std::lock_guard<std::mutex> lock(netMutex);
       INFO(NCCL_GRAPH, "TOPO/NET : Importing network plugins to topology");
+      NCCLCHECKGOTO(ncclIbMergeNicsAutoLogEnv(), ret, fail);
       ncclGin_t* gin = comm->sharedRes->ginState.ncclGin;
       if (gin) {
         netInfo.net = 0;
@@ -1612,7 +1690,7 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
       netInfo.makeVDevice = comm->ncclNet->makeVDevice;
       netInfo.devices = comm->ncclNet->devices;
       NCCLCHECK(ncclTopoGetFusionEnv(&netInfo.mergeLevel, &netInfo.forceMerge));
-      NCCLCHECKGOTO(ncclTopoProcessNet(xml, dumpXmlFile, &netInfo), ret, fail);
+      NCCLCHECKGOTO(ncclTopoProcessNetWithMergeView(xml, dumpXmlFile, &netInfo, mergeView), ret, fail);
   }
 
   // Remove XML branches which don't have a node with keep="1" (typically when importing a topology)
@@ -1672,6 +1750,10 @@ exit:
   return ret;
 fail:
   goto exit;
+}
+
+ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** system, const char* dumpXmlFile) {
+  return ncclTopoGetSystemWithMergeView(comm, system, dumpXmlFile, NCCL_NET_MERGE_VIEW_MERGED_DEFAULT);
 }
 
 ncclResult_t ncclTopoGetLocal(struct ncclTopoSystem* system, int type, int index, int resultType,
